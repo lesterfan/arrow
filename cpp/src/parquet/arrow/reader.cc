@@ -462,6 +462,7 @@ class LeafReader : public ColumnReaderImpl {
     record_reader_ = RecordReader::Make(
         descr_, leaf_info, ctx_->pool,
         /*read_dictionary=*/field_->type()->id() == ::arrow::Type::DICTIONARY,
+        /*read_run_end_encoded=*/field_->type()->id() == ::arrow::Type::RUN_END_ENCODED,
         /*read_dense_for_nullable=*/false, /*arrow_type=*/type_for_reading);
     NextRowGroup();
   }
