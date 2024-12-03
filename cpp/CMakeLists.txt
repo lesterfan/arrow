@@ -80,7 +80,7 @@ if(POLICY CMP0170)
 endif()
 
 # NOCOMMIT: Making sure we're using my version
-set(ARROW_VERSION "18.11.11_lester")
+set(ARROW_VERSION "18.0.0")
 
 string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" ARROW_BASE_VERSION "${ARROW_VERSION}")
 
