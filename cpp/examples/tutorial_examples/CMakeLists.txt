@@ -20,6 +20,7 @@ cmake_minimum_required(VERSION 3.16)
 project(ArrowTutorialExamples)
 
 find_package(ArrowDataset)
+find_package(gflags REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror -Wall -Wextra")
@@ -41,3 +42,13 @@ target_link_libraries(compute_example PRIVATE Arrow::arrow_shared)
 
 add_executable(dataset_example dataset_example.cc)
 target_link_libraries(dataset_example PRIVATE ArrowDataset::arrow_dataset_shared)
+
+add_executable(reproduce_experiment reproduce_experiment.cc)
+target_link_libraries(reproduce_experiment PRIVATE gflags
+                                                   Arrow::arrow_shared
+                                                   Parquet::parquet_shared)
+
+add_executable(read_row_group_range read_row_group_range.cc)
+target_link_libraries(read_row_group_range PRIVATE gflags
+                                                   Arrow::arrow_shared
+                                                   Parquet::parquet_shared)

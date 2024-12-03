@@ -279,7 +279,8 @@ class PARQUET_EXPORT RecordReader {
   static std::shared_ptr<RecordReader> Make(
       const ColumnDescriptor* descr, LevelInfo leaf_info,
       ::arrow::MemoryPool* pool = ::arrow::default_memory_pool(),
-      bool read_dictionary = false, bool read_dense_for_nullable = false);
+      bool read_dictionary = false, bool read_dense_for_nullable = false,
+      bool read_parquet_rle_cols_to_arrow_ree = false);
 
   virtual ~RecordReader() = default;
 
@@ -379,6 +380,8 @@ class PARQUET_EXPORT RecordReader {
   /// \brief True if reading directly as Arrow dictionary-encoded
   bool read_dictionary() const { return read_dictionary_; }
 
+  bool read_ree_encoded() const { return read_ree_encoded_; }
+
   /// \brief True if reading dense for nullable columns.
   bool read_dense_for_nullable() const { return read_dense_for_nullable_; }
 
@@ -430,6 +433,7 @@ class PARQUET_EXPORT RecordReader {
   int64_t levels_capacity_;
 
   bool read_dictionary_ = false;
+  bool read_ree_encoded_ = false;
   // If true, we will not leave any space for the null values in the values_
   // vector or fill nulls values in BinaryRecordReader/DictionaryRecordReader.
   //
@@ -448,6 +452,13 @@ class BinaryRecordReader : virtual public RecordReader {
 class DictionaryRecordReader : virtual public RecordReader {
  public:
   virtual std::shared_ptr<::arrow::ChunkedArray> GetResult() = 0;
+};
+
+/// \brief Read records directly to run-end-encoded Arrow form (int32
+/// run ends). Only valid for BYTE_ARRAY columns
+class ReeRecordReader : virtual public RecordReader {
+ public:
+  virtual std::shared_ptr<::arrow::Array> GetResult() = 0;
 };
 
 }  // namespace internal

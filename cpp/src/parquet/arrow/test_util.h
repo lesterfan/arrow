@@ -120,7 +120,9 @@ template <class ArrowType>
   using BuilderType = typename ::arrow::TypeTraits<ArrowType>::BuilderType;
   BuilderType builder;
   for (size_t i = 0; i < size; i++) {
-    RETURN_NOT_OK(builder.Append("test-string"));
+    std::ostringstream oss;
+    oss << "test-string-" << i;
+    RETURN_NOT_OK(builder.Append(oss.str().c_str()));
   }
   return builder.Finish(out);
 }
@@ -296,20 +298,13 @@ template <typename ArrowType>
   using BuilderType = typename ::arrow::TypeTraits<ArrowType>::BuilderType;
   BuilderType builder;
 
-  const int kBufferSize = 10;
-  uint8_t buffer[kBufferSize];
   for (size_t i = 0; i < size; i++) {
     if (!valid_bytes[i]) {
       RETURN_NOT_OK(builder.AppendNull());
     } else {
-      ::arrow::random_bytes(kBufferSize, seed + static_cast<uint32_t>(i), buffer);
-      if (ArrowType::is_utf8) {
-        // Trivially force data to be valid UTF8 by making it all ASCII
-        for (auto& byte : buffer) {
-          byte &= 0x7f;
-        }
-      }
-      RETURN_NOT_OK(builder.Append(buffer, kBufferSize));
+      // Not directly related to REE changes, but makes tests easier to debug.
+      // Make NullableArray string entries deterministic.
+      RETURN_NOT_OK(builder.Append("test-string"));
     }
   }
   return builder.Finish(out);
