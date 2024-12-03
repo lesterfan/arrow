@@ -255,6 +255,8 @@ class ParquetFile:
         it will be parsed as an URI to determine the filesystem.
     page_checksum_verification : bool, default False
         If True, verify the checksum for each page read from the file.
+    read_ree : list
+        List of column names to read directly as an REE Encoded Array.
 
     Examples
     --------
@@ -303,7 +305,7 @@ class ParquetFile:
                  pre_buffer=False, coerce_int96_timestamp_unit=None,
                  decryption_properties=None, thrift_string_size_limit=None,
                  thrift_container_size_limit=None, filesystem=None,
-                 page_checksum_verification=False):
+                 page_checksum_verification=False, read_ree=None):
 
         self._close_source = getattr(source, 'closed', True)
 
@@ -323,6 +325,7 @@ class ParquetFile:
             thrift_string_size_limit=thrift_string_size_limit,
             thrift_container_size_limit=thrift_container_size_limit,
             page_checksum_verification=page_checksum_verification,
+            read_ree=read_ree,
         )
         self.common_metadata = common_metadata
         self._nested_paths_by_prefix = self._build_nested_paths()
@@ -1280,7 +1283,7 @@ Examples
                  decryption_properties=None, thrift_string_size_limit=None,
                  thrift_container_size_limit=None,
                  page_checksum_verification=False,
-                 use_legacy_dataset=None):
+                 use_legacy_dataset=None, read_ree=None):
 
         if use_legacy_dataset is not None:
             warnings.warn(
@@ -1303,6 +1306,9 @@ Examples
                                 buffer_size=buffer_size)
         if read_dictionary is not None:
             read_options.update(dictionary_columns=read_dictionary)
+
+        if read_ree is not None:
+            read_options.update(ree_columns=read_ree)
 
         if decryption_properties is not None:
             read_options.update(decryption_properties=decryption_properties)
@@ -1781,7 +1787,7 @@ def read_table(source, *, columns=None, use_threads=True,
                coerce_int96_timestamp_unit=None,
                decryption_properties=None, thrift_string_size_limit=None,
                thrift_container_size_limit=None,
-               page_checksum_verification=False):
+               page_checksum_verification=False, read_ree=None):
 
     if use_legacy_dataset is not None:
         warnings.warn(
@@ -1806,6 +1812,7 @@ def read_table(source, *, columns=None, use_threads=True,
             thrift_string_size_limit=thrift_string_size_limit,
             thrift_container_size_limit=thrift_container_size_limit,
             page_checksum_verification=page_checksum_verification,
+            read_ree=read_ree
         )
     except ImportError:
         # fall back on ParquetFile for simple cases when pyarrow.dataset
@@ -1838,6 +1845,7 @@ def read_table(source, *, columns=None, use_threads=True,
             thrift_string_size_limit=thrift_string_size_limit,
             thrift_container_size_limit=thrift_container_size_limit,
             page_checksum_verification=page_checksum_verification,
+            read_ree=read_ree
         )
 
     return dataset.read(columns=columns, use_threads=use_threads,

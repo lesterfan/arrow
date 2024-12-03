@@ -1441,7 +1441,8 @@ cdef class ParquetReader(_Weakrefable):
              FileDecryptionProperties decryption_properties=None,
              thrift_string_size_limit=None,
              thrift_container_size_limit=None,
-             page_checksum_verification=False):
+             page_checksum_verification=False,
+             read_ree=None):
         """
         Open a parquet file for reading.
 
@@ -1458,6 +1459,7 @@ cdef class ParquetReader(_Weakrefable):
         thrift_string_size_limit : int, optional
         thrift_container_size_limit : int, optional
         page_checksum_verification : bool, default False
+        read_ree: iterable[int or str], optional
         """
         cdef:
             shared_ptr[CFileMetaData] c_metadata
