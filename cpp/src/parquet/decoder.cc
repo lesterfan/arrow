@@ -95,6 +95,7 @@ class TypedDecoderImpl : virtual public TypedDecoder<DType> {
 
   int DecodeSpaced(T* buffer, int num_values, int null_count, const uint8_t* valid_bits,
                    int64_t valid_bits_offset) override {
+    printf("TypedDecoderImpl::DecodeSpaced()\n");
     if (null_count > 0) {
       int values_to_read = num_values - null_count;
       int values_read = this->Decode(buffer, values_to_read);
@@ -631,6 +632,7 @@ class PlainByteArrayDecoder : public PlainDecoder<ByteArrayType>,
   int DecodeArrow(int num_values, int null_count, const uint8_t* valid_bits,
                   int64_t valid_bits_offset,
                   ::arrow::BinaryDictionary32Builder* builder) override {
+    printf("DecodeArrow()\n");
     int result = 0;
     PARQUET_THROW_NOT_OK(DecodeArrow(num_values, null_count, valid_bits,
                                      valid_bits_offset, builder, &result));
@@ -697,6 +699,7 @@ class PlainByteArrayDecoder : public PlainDecoder<ByteArrayType>,
   Status DecodeArrow(int num_values, int null_count, const uint8_t* valid_bits,
                      int64_t valid_bits_offset, BuilderType* builder,
                      int* out_values_decoded) {
+    printf("Internal PlainByteArrayDecoder::DecodeArrow()\n");
     RETURN_NOT_OK(builder->Reserve(num_values));
     int values_decoded = 0;
 
@@ -1143,10 +1146,12 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
   int DecodeArrow(int num_values, int null_count, const uint8_t* valid_bits,
                   int64_t valid_bits_offset,
                   typename EncodingTraits<ByteArrayType>::Accumulator* out) override {
+    printf("DictByteArrayDecoderImpl::DecodeArrow()\n");
     int result = 0;
     if (null_count == 0) {
       PARQUET_THROW_NOT_OK(DecodeArrowDenseNonNull(num_values, out, &result));
     } else {
+      printf("Calling DictByteArrayDecoderImpl::DecodeArrowDense()\n");
       PARQUET_THROW_NOT_OK(DecodeArrowDense(num_values, null_count, valid_bits,
                                             valid_bits_offset, out, &result));
     }
@@ -1158,6 +1163,7 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
                           int64_t valid_bits_offset,
                           typename EncodingTraits<ByteArrayType>::Accumulator* out,
                           int* out_num_values) {
+    printf("Starting DictByteArrayDecoderImpl::DecodeArrowDense()\n");
     constexpr int32_t kBufferSize = 1024;
     int32_t indices[kBufferSize];
 
@@ -1186,6 +1192,7 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
       const auto index = indices[pos_indices++];
       RETURN_NOT_OK(IndexInBounds(index));
       const auto& val = dict_values[index];
+      printf("Read val: %s \n", ByteArrayToString(val).c_str());
       RETURN_NOT_OK(helper.PrepareNextInput(val.len));
       RETURN_NOT_OK(helper.Append(val.ptr, static_cast<int32_t>(val.len)));
       ++values_decoded;
@@ -2354,8 +2361,10 @@ std::unique_ptr<Decoder> MakeDictDecoder(Type::type type_num,
       return std::make_unique<DictDecoderImpl<FloatType>>(descr, pool);
     case Type::DOUBLE:
       return std::make_unique<DictDecoderImpl<DoubleType>>(descr, pool);
-    case Type::BYTE_ARRAY:
+    case Type::BYTE_ARRAY: {
+      printf("Creating a DictByteArrayDecoderImpl for ALL BYTE_ARRAY pages encoded with RLE_DICTIONARY.\n");
       return std::make_unique<DictByteArrayDecoderImpl>(descr, pool);
+    }
     case Type::FIXED_LEN_BYTE_ARRAY:
       return std::make_unique<DictDecoderImpl<FLBAType>>(descr, pool);
     default:

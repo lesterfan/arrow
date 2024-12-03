@@ -300,6 +300,7 @@ inline bool RleDecoder::Get(T* val) {
 
 template <typename T>
 inline int RleDecoder::GetBatch(T* values, int batch_size) {
+  printf("RleDecoder::GetBatch()\n");
   DCHECK_GE(bit_width_, 0);
   int values_read = 0;
 
@@ -604,6 +605,7 @@ inline int RleDecoder::GetBatchWithDictSpaced(const T* dictionary,
                                               int batch_size, int null_count,
                                               const uint8_t* valid_bits,
                                               int64_t valid_bits_offset) {
+  printf("RleDecoder::GetBatchWithDictSpaced\n");
   if (null_count == 0) {
     return GetBatchWithDict<T>(dictionary, dictionary_length, out, batch_size);
   }
