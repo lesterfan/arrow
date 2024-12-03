@@ -443,14 +443,24 @@ void DoSimpleRoundtrip(const std::shared_ptr<Table>& table, bool use_threads,
                        int64_t row_group_size, const std::vector<int>& column_subset,
                        std::shared_ptr<Table>* out,
                        const std::shared_ptr<ArrowWriterProperties>& arrow_properties =
-                           default_arrow_writer_properties()) {
+                           default_arrow_writer_properties(),
+                       bool read_parquet_rle_cols_to_arrow_ree = false) {
   std::shared_ptr<Buffer> buffer;
   ASSERT_NO_FATAL_FAILURE(
       WriteTableToBuffer(table, row_group_size, arrow_properties, &buffer));
 
   std::unique_ptr<FileReader> reader;
-  ASSERT_OK_NO_THROW(OpenFile(std::make_shared<BufferReader>(buffer),
-                              ::arrow::default_memory_pool(), &reader));
+  FileReaderBuilder builder;
+  ASSERT_OK_NO_THROW(builder.Open(std::make_shared<BufferReader>(buffer)));
+  ArrowReaderProperties arrow_reader_properties;
+  if (read_parquet_rle_cols_to_arrow_ree) {
+    for (int i = 0; i < table->num_columns(); ++i) {
+      arrow_reader_properties.set_read_ree_encoded(i, true);
+    }
+  }
+  ASSERT_OK_NO_THROW(builder.memory_pool(::arrow::default_memory_pool())
+                         ->properties(arrow_reader_properties)
+                         ->Build(&reader));
 
   reader->set_use_threads(use_threads);
   if (column_subset.size() > 0) {
@@ -465,7 +475,8 @@ void DoRoundTripWithBatches(
     const std::shared_ptr<Table>& table, bool use_threads, int64_t row_group_size,
     const std::vector<int>& column_subset, std::shared_ptr<Table>* out,
     const std::shared_ptr<ArrowWriterProperties>& arrow_writer_properties =
-        default_arrow_writer_properties()) {
+        default_arrow_writer_properties(),
+    bool read_parquet_rle_cols_to_arrow_ree = false) {
   std::shared_ptr<Buffer> buffer;
   ASSERT_NO_FATAL_FAILURE(
       WriteTableToBuffer(table, row_group_size, arrow_writer_properties, &buffer));
@@ -475,6 +486,11 @@ void DoRoundTripWithBatches(
   ASSERT_OK_NO_THROW(builder.Open(std::make_shared<BufferReader>(buffer)));
   ArrowReaderProperties arrow_reader_properties;
   arrow_reader_properties.set_batch_size(row_group_size - 1);
+  if (read_parquet_rle_cols_to_arrow_ree) {
+    for (int i = 0; i < table->num_columns(); ++i) {
+      arrow_reader_properties.set_read_ree_encoded(i, true);
+    }
+  }
   ASSERT_OK_NO_THROW(builder.memory_pool(::arrow::default_memory_pool())
                          ->properties(arrow_reader_properties)
                          ->Build(&reader));
@@ -485,35 +501,47 @@ void DoRoundTripWithBatches(
         &batch_reader));
   } else {
     // Read everything
-
     ASSERT_OK_NO_THROW(reader->GetRecordBatchReader(
         Iota(reader->parquet_reader()->metadata()->num_row_groups()), &batch_reader));
   }
+  printf("Running Table::FromRecordBatchReader\n");
   ASSERT_OK_AND_ASSIGN(*out, Table::FromRecordBatchReader(batch_reader.get()));
 }
 
-void CheckSimpleRoundtrip(
-    const std::shared_ptr<Table>& table, int64_t row_group_size,
-    const std::shared_ptr<ArrowWriterProperties>& arrow_writer_properties =
-        default_arrow_writer_properties()) {
+void CheckSimpleRoundtrip(const std::shared_ptr<Table>& table, int64_t row_group_size,
+                          const std::shared_ptr<ArrowWriterProperties>&
+                              arrow_writer_properties = default_arrow_writer_properties(),
+                          bool read_parquet_rle_cols_to_arrow_ree = false) {
+  std::shared_ptr<Table> expected_table = table;
+  if (read_parquet_rle_cols_to_arrow_ree) {
+    std::vector<int> column_indices(table->num_columns());
+    std::iota(column_indices.begin(), column_indices.end(), 0);
+    ASSERT_OK_AND_ASSIGN(expected_table,
+                         RunEndEncodeTableColumns(*table, column_indices));
+  }
+
   std::shared_ptr<Table> result;
-  ASSERT_NO_FATAL_FAILURE(DoSimpleRoundtrip(table, false /* use_threads */,
-                                            row_group_size, {}, &result,
-                                            arrow_writer_properties));
-  ::arrow::AssertSchemaEqual(*table->schema(), *result->schema(),
+  ASSERT_NO_FATAL_FAILURE(
+      DoSimpleRoundtrip(table, false /* use_threads */, row_group_size, {}, &result,
+                        arrow_writer_properties, read_parquet_rle_cols_to_arrow_ree));
+  ::arrow::AssertSchemaEqual(*expected_table->schema(), *result->schema(),
                              /*check_metadata=*/false);
   ASSERT_OK(result->ValidateFull());
+  printf("1. expected_table=%s, result=%s\n", expected_table->ToString().c_str(),
+         result->ToString().c_str());
 
-  ::arrow::AssertTablesEqual(*table, *result, false);
+  ::arrow::AssertTablesEqual(*expected_table, *result, false);
 
-  ASSERT_NO_FATAL_FAILURE(DoRoundTripWithBatches(table, false /* use_threads */,
-                                                 row_group_size, {}, &result,
-                                                 arrow_writer_properties));
-  ::arrow::AssertSchemaEqual(*table->schema(), *result->schema(),
+  ASSERT_NO_FATAL_FAILURE(DoRoundTripWithBatches(
+      table, false /* use_threads */, row_group_size, {}, &result,
+      arrow_writer_properties, read_parquet_rle_cols_to_arrow_ree));
+  ::arrow::AssertSchemaEqual(*expected_table->schema(), *result->schema(),
                              /*check_metadata=*/false);
   ASSERT_OK(result->ValidateFull());
+  printf("2. expected_table=%s, result=%s\n", expected_table->ToString().c_str(),
+         result->ToString().c_str());
 
-  ::arrow::AssertTablesEqual(*table, *result, false);
+  ::arrow::AssertTablesEqual(*expected_table, *result, false);
 }
 
 static std::shared_ptr<GroupNode> MakeSimpleSchema(const DataType& type,
@@ -614,9 +642,11 @@ class ParquetIOTestBase : public ::testing::Test {
   virtual void SetUp() {}
 
   std::unique_ptr<ParquetFileWriter> MakeWriter(
-      const std::shared_ptr<GroupNode>& schema) {
+      const std::shared_ptr<GroupNode>& schema,
+      const std::shared_ptr<WriterProperties>& writer_properties =
+          default_writer_properties()) {
     sink_ = CreateOutputStream();
-    return ParquetFileWriter::Open(sink_, schema);
+    return ParquetFileWriter::Open(sink_, schema, writer_properties);
   }
 
   void ReaderFromSink(
@@ -721,13 +751,19 @@ class ParquetIOTestBase : public ::testing::Test {
     AssertArraysEqual(*values, *result);
   }
 
-  void CheckRoundTrip(const std::shared_ptr<Table>& table) {
-    CheckSimpleRoundtrip(table, table->num_rows());
+  void CheckRoundTrip(const std::shared_ptr<Table>& table,
+                      const std::shared_ptr<ArrowWriterProperties>&
+                          arrow_writer_properties = default_arrow_writer_properties(),
+                      bool read_parquet_rle_cols_to_arrow_ree = false) {
+    CheckSimpleRoundtrip(table, table->num_rows(), arrow_writer_properties,
+                         read_parquet_rle_cols_to_arrow_ree);
   }
 
   template <typename ArrayType>
   void WriteColumn(const std::shared_ptr<GroupNode>& schema,
-                   const std::shared_ptr<ArrayType>& values) {
+                   const std::shared_ptr<ArrayType>& values,
+                   const std::shared_ptr<WriterProperties>& writer_properties =
+                       default_writer_properties()) {
     SchemaDescriptor descriptor;
     ASSERT_NO_THROW(descriptor.Init(schema));
     std::shared_ptr<::arrow::Schema> arrow_schema;
@@ -735,9 +771,9 @@ class ParquetIOTestBase : public ::testing::Test {
     ASSERT_OK_NO_THROW(FromParquetSchema(&descriptor, props, &arrow_schema));
 
     std::unique_ptr<FileWriter> writer;
-    ASSERT_OK_NO_THROW(FileWriter::Make(::arrow::default_memory_pool(),
-                                        MakeWriter(schema), arrow_schema,
-                                        default_arrow_writer_properties(), &writer));
+    ASSERT_OK_NO_THROW(FileWriter::Make(
+        ::arrow::default_memory_pool(), MakeWriter(schema, writer_properties),
+        arrow_schema, default_arrow_writer_properties(), &writer));
     ASSERT_OK_NO_THROW(writer->NewRowGroup(values->length()));
     ASSERT_OK_NO_THROW(writer->WriteColumnChunk(*values));
     ASSERT_OK_NO_THROW(writer->Close());
@@ -811,6 +847,118 @@ TEST_F(TestReadDecimals, Decimal256ByteArray) {
   auto expected =
       ArrayFromJSON(::arrow::decimal256(40, 3), R"(["123.456", "987.654", "-123.456"])");
   CheckReadFromByteArrays(LogicalType::Decimal(40, 3), big_endian_decimals, *expected);
+}
+
+template <typename TestType>
+class TestParquetRee : public ParquetIOTestBase {
+ public:
+  std::unique_ptr<FileReader> getReeFileReaderFromSink() {
+    std::unique_ptr<FileReader> reader;
+    {
+      ArrowReaderProperties properties = default_arrow_reader_properties();
+      properties.set_read_ree_encoded(0, true);
+      ReaderFromSink(&reader, std::move(properties));
+    }
+    return reader;
+  }
+
+  void ReadAndReeCheckSingleColumnFile(const Array& values) {
+    std::shared_ptr<Array> out;
+    {
+      std::unique_ptr<FileReader> reader = getReeFileReaderFromSink();
+      ReadSingleColumnFile(std::move(reader), &out);
+    }
+
+    auto expected_encoded_result = ::arrow::compute::RunEndEncode(values);
+    EXPECT_TRUE(expected_encoded_result.ok());
+    std::shared_ptr<Array> expected_encoded_array = expected_encoded_result->make_array();
+
+    // printf("out = %s, expected_encoded_array = %s\n", out->ToString().c_str(),
+    //  expected_encoded_array->ToString().c_str());
+    AssertArraysEqual(*expected_encoded_array, *out);
+  }
+
+  void CheckReeRoundTrip(const std::shared_ptr<Table>& table) {
+    CheckSimpleRoundtrip(table, table->num_rows(), default_arrow_writer_properties(),
+                         true /* read_parquet_rle_cols_to_arrow_ree */);
+  }
+};
+
+// TODO: Make this work for ::arrow::LargeBinaryType and ::arrow::LargeStringType
+typedef ::testing::Types<::arrow::StringType, ::arrow::BinaryType> ReeTestTypes;
+
+TYPED_TEST_SUITE(TestParquetRee, ReeTestTypes);
+
+TYPED_TEST(TestParquetRee, SingleColumnRequiredReadWriteDictionaryEnabled) {
+  std::shared_ptr<Array> values;
+  ASSERT_OK(NonNullArray<TypeParam>(SMALL_SIZE, &values));
+
+  std::shared_ptr<GroupNode> schema =
+      MakeSimpleSchema(*values->type(), Repetition::REQUIRED);
+  auto writer_properties =
+      parquet::WriterProperties::Builder()
+          .enable_dictionary()  // Globally enable dictionary encoding
+          ->build();
+  ASSERT_NO_FATAL_FAILURE(this->WriteColumn(schema, values, writer_properties));
+
+  ASSERT_NO_FATAL_FAILURE(this->ReadAndReeCheckSingleColumnFile(*values));
+}
+
+TYPED_TEST(TestParquetRee, SingleColumnOptionalReadWriteDictionaryEnabled) {
+  std::shared_ptr<Array> values;
+  ASSERT_OK(NullableArray<TypeParam>(SMALL_SIZE, 10, kDefaultSeed, &values));
+
+  std::shared_ptr<GroupNode> schema =
+      MakeSimpleSchema(*values->type(), Repetition::OPTIONAL);
+  auto writer_properties =
+      parquet::WriterProperties::Builder()
+          .enable_dictionary()  // Globally enable dictionary encoding
+          ->build();
+  ASSERT_NO_FATAL_FAILURE(this->WriteColumn(schema, values, writer_properties));
+
+  ASSERT_NO_FATAL_FAILURE(this->ReadAndReeCheckSingleColumnFile(*values));
+}
+
+TYPED_TEST(TestParquetRee, SingleColumnRequiredReadWriteDictionaryDisabled) {
+  std::shared_ptr<Array> values;
+  ASSERT_OK(NonNullArray<TypeParam>(SMALL_SIZE, &values));
+
+  std::shared_ptr<GroupNode> schema =
+      MakeSimpleSchema(*values->type(), Repetition::REQUIRED);
+  auto writer_properties =
+      parquet::WriterProperties::Builder()
+          .disable_dictionary()  // Globally disable dictionary encoding
+          ->build();
+  ASSERT_NO_FATAL_FAILURE(this->WriteColumn(schema, values, writer_properties));
+
+  ASSERT_NO_FATAL_FAILURE(this->ReadAndReeCheckSingleColumnFile(*values));
+}
+
+TYPED_TEST(TestParquetRee, SingleColumnOptionalReadWriteDictionaryDisabled) {
+  std::shared_ptr<Array> values;
+  ASSERT_OK(NullableArray<TypeParam>(SMALL_SIZE, 10, kDefaultSeed, &values));
+
+  std::shared_ptr<GroupNode> schema =
+      MakeSimpleSchema(*values->type(), Repetition::OPTIONAL);
+  auto writer_properties =
+      parquet::WriterProperties::Builder()
+          .disable_dictionary()  // Globally disable dictionary encoding
+          ->build();
+  ASSERT_NO_FATAL_FAILURE(this->WriteColumn(schema, values, writer_properties));
+
+  ASSERT_NO_FATAL_FAILURE(this->ReadAndReeCheckSingleColumnFile(*values));
+}
+
+TYPED_TEST(TestParquetRee, SingleColumnTableOptionalReadWrite) {
+  // Dictionary encoding is enabled by default
+  // This also tests max_definition_level = 1
+  std::shared_ptr<Array> values;
+
+  ASSERT_OK(NullableArray<TypeParam>(SMALL_SIZE, 10, kDefaultSeed, &values));
+  std::shared_ptr<Table> table = MakeSimpleTable(values, true);
+  ASSERT_NO_FATAL_FAILURE(
+      this->CheckRoundTrip(table, default_arrow_writer_properties(),
+                           true /* read_parquet_rle_cols_to_arrow_ree */));
 }
 
 template <typename TestType>
