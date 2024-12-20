@@ -1331,10 +1331,10 @@ class TypedRecordReader : public TypedColumnReaderImpl<DType>,
         int16_t* rep_levels = this->rep_levels() + levels_written_;
 
         // HACK: skip reading def levels since REE decoding reads them directly
-        // if (ARROW_PREDICT_FALSE(this->ReadDefinitionLevels(batch_size, def_levels) !=
-        //                         batch_size)) {
-        //   throw ParquetException(kErrorRepDefLevelNotMatchesNumValues);
-        // }
+        if (ARROW_PREDICT_FALSE(this->ReadDefinitionLevels(batch_size, def_levels) !=
+                                batch_size)) {
+          throw ParquetException(kErrorRepDefLevelNotMatchesNumValues);
+        }
         if (this->max_rep_level_ > 0) {
           int64_t rep_levels_read = this->ReadRepetitionLevels(batch_size, rep_levels);
           if (ARROW_PREDICT_FALSE(rep_levels_read != batch_size)) {
@@ -1717,8 +1717,8 @@ class TypedRecordReader : public TypedColumnReaderImpl<DType>,
 
         // Avoid valgrind warnings
         // HACK: skip this for the REE since we don't use valid bits
-        // memset(valid_bits_->mutable_data() + valid_bytes_old, 0,
-        //        static_cast<size_t>(valid_bytes_new - valid_bytes_old));
+        memset(valid_bits_->mutable_data() + valid_bytes_old, 0,
+               static_cast<size_t>(valid_bytes_new - valid_bytes_old));
       }
     }
   }
@@ -2215,32 +2215,12 @@ class ByteArrayReeRecordReader final : public TypedRecordReader<ByteArrayType>,
     // read.
     ARROW_DCHECK_GE(levels_position_, start_levels_position);
 
-    int64_t values_read = 0;
-    int64_t nulls_read = 0;
-
-    while (start_levels_position < levels_position_) {
-      int16_t level;
-      int num_levels = definition_level_decoder_.DecodeOneRun(
-          levels_position_ - start_levels_position, &level);
-      if (ARROW_PREDICT_FALSE(num_levels == 0)) {
-        break;
-      }
-      // Kinda a hack: since we can read the def levels without RLE decoding,
-      // we'll handle appending nulls here.
-      if (level == leaf_info_.def_level) {
-        int num_decoded = this->current_decoder_->DecodeArrow(
-            num_levels, 0, NULLPTR, 0, builder_.get());
-        CheckNumberDecoded(num_decoded, num_levels);
-      } else {
-        PARQUET_THROW_NOT_OK(builder_->AppendNulls(num_levels));
-        nulls_read += num_levels;
-      }
-      values_read += num_levels;
-      start_levels_position += num_levels;
-    }
-
-    *values_to_read = values_read - nulls_read;
-    *null_count = nulls_read;
+    *values_to_read = levels_position_ - start_levels_position;
+    // Hack: Need to think some more about getting the null counts right with this decoupled approach
+    *null_count = 0;
+    int num_decoded = this->current_decoder_->DecodeArrow(
+        *values_to_read, 0, NULLPTR, 0, builder_.get());
+    // printf("num_decoded=%d, values_to_read=%lld\n", num_decoded, *values_to_read);
 
     ResetValues();
   }
