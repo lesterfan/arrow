@@ -1273,7 +1273,7 @@ class TypedRecordReader : public TypedColumnReaderImpl<DType>,
   }
 
   const void* ReadDictionary(int32_t* dictionary_length) override {
-    printf("ReadDictionary()\n"); // NOT CALLED AFAICT
+    printf("ReadDictionary()\n");  // NOT CALLED AFAICT
     if (this->current_decoder_ == nullptr && !this->HasNextInternal()) {
       *dictionary_length = 0;
       return nullptr;
@@ -2109,6 +2109,40 @@ class ByteArrayChunkedRecordReader final : public TypedRecordReader<ByteArrayTyp
   typename EncodingTraits<ByteArrayType>::Accumulator accumulator_;
 };
 
+class ByteArrayReeRecordReader final : public TypedRecordReader<ByteArrayType>,
+                                       virtual public ReeRecordReader {
+ public:
+  ByteArrayReeRecordReader(const ColumnDescriptor* descr, LevelInfo leaf_info,
+                           ::arrow::MemoryPool* pool, bool read_dense_for_nullable)
+      : TypedRecordReader<ByteArrayType>(descr, leaf_info, pool,
+                                         read_dense_for_nullable) {
+    ARROW_DCHECK_EQ(descr_->physical_type(), Type::BYTE_ARRAY);
+    PARQUET_THROW_NOT_OK(::arrow::MakeBuilder(
+        ::arrow::default_memory_pool(),
+        ::arrow::run_end_encoded(::arrow::int32(), ::arrow::binary()), &builder_));
+  }
+  void ReadValuesDense(int64_t values_to_read) override { ParquetException::NYI(); }
+  void ReadValuesSpaced(int64_t values_to_read, int64_t null_count) override {
+    printf("ByteArrayReeRecordReader::ReadValuesSpaced(%lld, %lld)\n", values_to_read,
+           null_count);
+    auto run_end_encoded_builder_ptr =
+        checked_cast<::arrow::RunEndEncodedBuilder*>(builder_.get());
+    int64_t num_decoded = this->current_decoder_->DecodeArrow(
+        static_cast<int>(values_to_read), static_cast<int>(null_count),
+        valid_bits_->mutable_data(), values_written_, run_end_encoded_builder_ptr);
+    CheckNumberDecoded(num_decoded, values_to_read - null_count);
+    ResetValues();
+  }
+  std::shared_ptr<::arrow::Array> GetResult() override {
+    std::shared_ptr<::arrow::Array> result;
+    PARQUET_THROW_NOT_OK(builder_->Finish(&result));
+    return result;
+  }
+
+ private:
+  std::unique_ptr<::arrow::ArrayBuilder> builder_;
+};
+
 /// ByteArrayDictionaryRecordReader reads into ::arrow::dictionary(index: int32,
 /// values: binary).
 ///
@@ -2204,15 +2238,17 @@ void TypedRecordReader<ByteArrayType>::DebugPrintState() {}
 template <>
 void TypedRecordReader<FLBAType>::DebugPrintState() {}
 
-std::shared_ptr<RecordReader> MakeByteArrayRecordReader(const ColumnDescriptor* descr,
-                                                        LevelInfo leaf_info,
-                                                        ::arrow::MemoryPool* pool,
-                                                        bool read_dictionary,
-                                                        bool read_dense_for_nullable) {
+std::shared_ptr<RecordReader> MakeByteArrayRecordReader(
+    const ColumnDescriptor* descr, LevelInfo leaf_info, ::arrow::MemoryPool* pool,
+    bool read_dictionary, bool read_dense_for_nullable, bool read_run_end_encoded) {
   if (read_dictionary) {
     printf("Returning a ByteArrayDictionaryRecordReader\n");
     return std::make_shared<ByteArrayDictionaryRecordReader>(descr, leaf_info, pool,
                                                              read_dense_for_nullable);
+  } else if (read_run_end_encoded) {
+    printf("Returning a ByteArrayReeRecordReader\n");
+    return std::make_shared<ByteArrayReeRecordReader>(descr, leaf_info, pool,
+                                                      read_dense_for_nullable);
   } else {
     printf("Returning a ByteArrayChunkedRecordReader\n");
     return std::make_shared<ByteArrayChunkedRecordReader>(descr, leaf_info, pool,
@@ -2249,8 +2285,9 @@ std::shared_ptr<RecordReader> RecordReader::Make(const ColumnDescriptor* descr,
       std::ostringstream oss;
       oss << leaf_info;
       printf("Returning a ByteArrayRecordReader, leaf_info=%s\n", oss.str().c_str());
+      // Same hack as larry: always read run_end_encoded
       return MakeByteArrayRecordReader(descr, leaf_info, pool, read_dictionary,
-                                       read_dense_for_nullable);
+                                       read_dense_for_nullable, true);
     }
     case Type::FIXED_LEN_BYTE_ARRAY:
       return std::make_shared<FLBARecordReader>(descr, leaf_info, pool,
