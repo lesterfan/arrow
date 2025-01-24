@@ -450,6 +450,14 @@ class DictionaryRecordReader : virtual public RecordReader {
   virtual std::shared_ptr<::arrow::ChunkedArray> GetResult() = 0;
 };
 
+/// \brief Read records directly to run-end-encoded Arrow form (int32
+/// run ends). Only valid for BYTE_ARRAY columns
+class ReeRecordReader : virtual public RecordReader {
+ public:
+  virtual std::shared_ptr<::arrow::Array> GetResult() = 0;
+};
+
+
 }  // namespace internal
 
 using BoolReader = TypedColumnReader<BooleanType>;
