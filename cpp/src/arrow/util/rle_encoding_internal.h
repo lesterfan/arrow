@@ -119,6 +119,9 @@ class RleDecoder {
   template <typename T>
   int GetBatch(T* values, int batch_size);
 
+  template <typename T>
+  bool GetNextValueInBatchWithRepeats(T* val, int* num_repeats, int batch_size);
+
   /// Like GetBatch but add spacing for null entries
   template <typename T>
   int GetBatchSpaced(int batch_size, int null_count, const uint8_t* valid_bits,
@@ -332,6 +335,27 @@ inline int RleDecoder::GetBatch(T* values, int batch_size) {
   }
 
   return values_read;
+}
+
+template <typename T>
+inline bool RleDecoder::GetNextValueInBatchWithRepeats(T* val, int* num_repeats,
+                                                       int batch_size) {
+  printf("RleDecoder::GetNextValueInBatchWithRepeats()\n");
+  DCHECK_GE(bit_width_, 0);
+  if (repeat_count_ > 0) {  // Repeated value case.
+    *val = static_cast<T>(current_value_);
+    *num_repeats = std::min(repeat_count_, batch_size);
+    repeat_count_ -= *num_repeats;
+    return true;
+  } else if (literal_count_ > 0) {
+    if (!bit_reader_.GetValue(bit_width_, val)) return false;
+    *num_repeats = 1;
+    literal_count_--;
+    return true;
+  } else {
+    if (!NextCounts<T>()) return false;
+    return GetNextValueInBatchWithRepeats(val, num_repeats, batch_size);
+  }
 }
 
 template <typename T, typename RunType, typename Converter>

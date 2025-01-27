@@ -1204,89 +1204,56 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
         "Starting DictByteArrayDecoderImpl::DecodeArrowDense(), ReeAccumulator "
         "specialization\n");
     constexpr int32_t kBufferSize = 1024;
-    int32_t indices[kBufferSize];
-
     const auto* dict_values = dictionary_->data_as<ByteArray>();
     int values_decoded = 0;
-    int num_indices = 0;
-    int pos_indices = 0;
 
-    struct LastState {
-      std::optional<parquet::ByteArray> lastVal;
-      int numVals = 0;
-    };
-    LastState lastState;
-
-    auto handleStateChange = [&](std::optional<parquet::ByteArray> newVal, bool isLast) {
-      if (newVal == lastState.lastVal && !isLast) {
-        ++lastState.numVals;
-      } else {
-        if (lastState.lastVal.has_value()) {
-          auto str_value = ByteArrayToString(*lastState.lastVal);
-          auto data_buffer = ::arrow::Buffer::FromString(str_value);
-          auto scalar = std::make_shared<::arrow::BinaryScalar>(data_buffer);
-          printf("Appending lastVal: %s, numVals: %d \n",
-                 str_value.c_str(), lastState.numVals);
-          RETURN_NOT_OK(builder->AppendScalar(*scalar, lastState.numVals));
-        } else if (lastState.numVals > 0) {
-          printf("Appending nulls, numVals: %d \n", lastState.numVals);
-          RETURN_NOT_OK(builder->AppendNulls(lastState.numVals));
-        }
-        lastState.lastVal = newVal;
-        lastState.numVals = 1;
+    auto visit_valid = [&](int* num_visited) -> Status {
+      const auto batch_size =
+          std::min<int32_t>(kBufferSize, num_values - null_count - values_decoded);
+      int32_t index = 0;
+      int num_repeats = 0;
+      if (idx_decoder_.GetNextValueInBatchWithRepeats(&index, &num_repeats, batch_size)) {
+        RETURN_NOT_OK(IndexInBounds(index));
+        parquet::ByteArray value = dict_values[index];
+        auto str_value = ByteArrayToString(value);
+        auto data_buffer = ::arrow::Buffer::FromString(str_value);
+        auto scalar = std::make_shared<::arrow::BinaryScalar>(data_buffer);
+        printf("Appending lastVal: %s, numVals: %d\n", str_value.c_str(), num_repeats);
+        RETURN_NOT_OK(builder->AppendScalar(*scalar, num_repeats));
+        values_decoded += num_repeats;
+        *num_visited = num_repeats;
       }
       return Status::OK();
     };
 
-    auto visit_valid = [&](int64_t position) -> Status {
-      if (num_indices == pos_indices) {
-        // Refill indices buffer
-        const auto batch_size =
-            std::min<int32_t>(kBufferSize, num_values - null_count - values_decoded);
-        num_indices = idx_decoder_.GetBatch(indices, batch_size);
-        if (ARROW_PREDICT_FALSE(num_indices < 1)) {
-          return Status::Invalid("Invalid number of indices: ", num_indices);
-        }
-        pos_indices = 0;
-      }
-      const auto index = indices[pos_indices++];
-      RETURN_NOT_OK(IndexInBounds(index));
-      const auto& val = dict_values[index];
-      // printf("Read val: %s \n", ByteArrayToString(val).c_str());
-      RETURN_NOT_OK(handleStateChange(val, false));
-      ++values_decoded;
-      return Status::OK();
-    };
-
-    auto visit_null = [&]() -> Status {
-      RETURN_NOT_OK(handleStateChange(std::nullopt, false));
+    auto visit_null = [&](int num_repeats) -> Status {
+      printf("Appending nulls, numVals: %d\n", num_repeats);
+      ARROW_RETURN_NOT_OK(builder->AppendNulls(num_repeats));
       return Status::OK();
     };
 
     ::arrow::internal::BitBlockCounter bit_blocks(valid_bits, valid_bits_offset,
                                                   num_values);
     int64_t position = 0;
+    int num_last_visited = 0;
     while (position < num_values) {
       const auto block = bit_blocks.NextWord();
       if (block.AllSet()) {
-        for (int64_t i = 0; i < block.length; ++i, ++position) {
-          ARROW_RETURN_NOT_OK(visit_valid(position));
-        }
+        ARROW_RETURN_NOT_OK(visit_valid(&num_last_visited));
+        position += num_last_visited;
       } else if (block.NoneSet()) {
-        for (int64_t i = 0; i < block.length; ++i, ++position) {
-          ARROW_RETURN_NOT_OK(visit_null());
-        }
+        ARROW_RETURN_NOT_OK(visit_null(block.length));
       } else {
         for (int64_t i = 0; i < block.length; ++i, ++position) {
           if (bit_util::GetBit(valid_bits, valid_bits_offset + position)) {
-            ARROW_RETURN_NOT_OK(visit_valid(position));
+            ARROW_RETURN_NOT_OK(visit_valid(&num_last_visited));
+            position += num_last_visited;
           } else {
-            ARROW_RETURN_NOT_OK(visit_null());
+            ARROW_RETURN_NOT_OK(visit_null(1));
           }
         }
       }
     }
-    RETURN_NOT_OK(handleStateChange(std::nullopt, true));
 
     *out_num_values = values_decoded;
     return Status::OK();
