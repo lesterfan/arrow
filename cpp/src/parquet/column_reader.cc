@@ -2241,6 +2241,8 @@ void TypedRecordReader<FLBAType>::DebugPrintState() {}
 std::shared_ptr<RecordReader> MakeByteArrayRecordReader(
     const ColumnDescriptor* descr, LevelInfo leaf_info, ::arrow::MemoryPool* pool,
     bool read_dictionary, bool read_dense_for_nullable, bool read_run_end_encoded) {
+  printf("MakeByteArrayRecordReader(), read_run_end_encoded = %d\n",
+         read_run_end_encoded);
   if (read_dictionary) {
     printf("Returning a ByteArrayDictionaryRecordReader\n");
     return std::make_shared<ByteArrayDictionaryRecordReader>(descr, leaf_info, pool,
@@ -2258,10 +2260,10 @@ std::shared_ptr<RecordReader> MakeByteArrayRecordReader(
 
 }  // namespace
 
-std::shared_ptr<RecordReader> RecordReader::Make(const ColumnDescriptor* descr,
-                                                 LevelInfo leaf_info, MemoryPool* pool,
-                                                 bool read_dictionary,
-                                                 bool read_dense_for_nullable) {
+std::shared_ptr<RecordReader> RecordReader::Make(
+    const ColumnDescriptor* descr, LevelInfo leaf_info, MemoryPool* pool,
+    bool read_dictionary, bool read_dense_for_nullable,
+    bool read_parquet_rle_cols_to_arrow_ree) {
   switch (descr->physical_type()) {
     case Type::BOOLEAN:
       return std::make_shared<TypedRecordReader<BooleanType>>(descr, leaf_info, pool,
@@ -2284,10 +2286,13 @@ std::shared_ptr<RecordReader> RecordReader::Make(const ColumnDescriptor* descr,
     case Type::BYTE_ARRAY: {
       std::ostringstream oss;
       oss << leaf_info;
-      printf("Returning a ByteArrayRecordReader, leaf_info=%s\n", oss.str().c_str());
-      // Same hack as larry: always read run_end_encoded
+      printf(
+          "Returning a ByteArrayRecordReader, leaf_info=%s, "
+          "read_parquet_rle_cols_to_arrow_ree = %d\n",
+          oss.str().c_str(), read_parquet_rle_cols_to_arrow_ree);
       return MakeByteArrayRecordReader(descr, leaf_info, pool, read_dictionary,
-                                       read_dense_for_nullable, true);
+                                       read_dense_for_nullable,
+                                       read_parquet_rle_cols_to_arrow_ree);
     }
     case Type::FIXED_LEN_BYTE_ARRAY:
       return std::make_shared<FLBARecordReader>(descr, leaf_info, pool,

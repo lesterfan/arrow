@@ -223,6 +223,7 @@ class FileReaderImpl : public FileReader {
     ctx->iterator_factory = SomeRowGroupsFactory(row_groups);
     ctx->filter_leaves = true;
     ctx->included_leaves = included_leaves;
+    ctx->reader_properties = reader_properties_;
     return GetReader(manifest_.schema_fields[i], ctx, out);
   }
 
@@ -483,9 +484,15 @@ class LeafReader : public ColumnReaderImpl {
         field_(std::move(field)),
         input_(std::move(input)),
         descr_(input_->descr()) {
-    printf("Making a RecordReader, schema_field_->type->id() = %d\n", field_->type()->id());
-    record_reader_ = RecordReader::Make(
-        descr_, leaf_info, ctx_->pool, field_->type()->id() == ::arrow::Type::DICTIONARY);
+    bool read_parquet_rle_cols_to_arrow_ree =
+        ctx_->reader_properties.get_read_parquet_rle_cols_to_arrow_ree();
+    printf(
+        "Making a RecordReader, schema_field_->type->id() = %d, "
+        "read_parquet_rle_cols_to_arrow_ree = %d\n",
+        field_->type()->id(), read_parquet_rle_cols_to_arrow_ree);
+    record_reader_ = RecordReader::Make(descr_, leaf_info, ctx_->pool,
+                                        field_->type()->id() == ::arrow::Type::DICTIONARY,
+                                        false, read_parquet_rle_cols_to_arrow_ree);
     NextRowGroup();
   }
 
@@ -519,7 +526,8 @@ class LeafReader : public ColumnReaderImpl {
         break;
       }
       int64_t records_read = record_reader_->ReadRecords(records_to_read);
-      printf("records_read = %lld, records_to_read = %lld", records_read, records_to_read);
+      printf("records_read = %lld, records_to_read = %lld", records_read,
+             records_to_read);
       records_to_read -= records_read;
       if (records_read == 0) {
         NextRowGroup();
@@ -1260,6 +1268,7 @@ Status FileReaderImpl::GetColumn(int i, FileColumnIteratorFactory iterator_facto
   ctx->pool = pool_;
   ctx->iterator_factory = iterator_factory;
   ctx->filter_leaves = false;
+  ctx->reader_properties = reader_properties_;
   std::unique_ptr<ColumnReaderImpl> result;
   printf("Getting ColumnReader for column %d\n", i);
   RETURN_NOT_OK(GetReader(manifest_.schema_fields[i], ctx, &result));

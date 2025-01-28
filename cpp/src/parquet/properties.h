@@ -871,7 +871,8 @@ class PARQUET_EXPORT ArrowReaderProperties {
         pre_buffer_(true),
         cache_options_(::arrow::io::CacheOptions::LazyDefaults()),
         coerce_int96_timestamp_unit_(::arrow::TimeUnit::NANO),
-        arrow_extensions_enabled_(false) {}
+        arrow_extensions_enabled_(false),
+        read_parquet_rle_cols_to_arrow_ree_(false) {}
 
   /// \brief Set whether to use the IO thread pool to parse columns in parallel.
   ///
@@ -954,6 +955,13 @@ class PARQUET_EXPORT ArrowReaderProperties {
   }
   bool get_arrow_extensions_enabled() const { return arrow_extensions_enabled_; }
 
+  void set_read_parquet_rle_cols_to_arrow_ree(bool reads_enabled) {
+    read_parquet_rle_cols_to_arrow_ree_ = reads_enabled;
+  }
+  bool get_read_parquet_rle_cols_to_arrow_ree() const {
+    return read_parquet_rle_cols_to_arrow_ree_;
+  }
+
  private:
   bool use_threads_;
   std::unordered_set<int> read_dict_indices_;
@@ -963,6 +971,7 @@ class PARQUET_EXPORT ArrowReaderProperties {
   ::arrow::io::CacheOptions cache_options_;
   ::arrow::TimeUnit::type coerce_int96_timestamp_unit_;
   bool arrow_extensions_enabled_;
+  bool read_parquet_rle_cols_to_arrow_ree_;
 };
 
 /// EXPERIMENTAL: Constructs the default ArrowReaderProperties
