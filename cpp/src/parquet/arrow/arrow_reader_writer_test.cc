@@ -814,6 +814,64 @@ TEST_F(TestReadDecimals, Decimal256ByteArray) {
 }
 
 template <typename TestType>
+class TestParquetRee : public ParquetIOTestBase {
+ public:
+  std::unique_ptr<FileReader> getReeFileReaderFromSink() {
+    std::unique_ptr<FileReader> reader;
+    {
+      ArrowReaderProperties properties = default_arrow_reader_properties();
+      properties.set_read_parquet_rle_cols_to_arrow_ree(true);
+      ReaderFromSink(&reader, std::move(properties));
+    }
+    return reader;
+  }
+
+  void ReadAndReeCheckSingleColumnFile(const Array& values) {
+    std::shared_ptr<Array> out;
+    {
+      std::unique_ptr<FileReader> reader = getReeFileReaderFromSink();
+      ReadSingleColumnFile(std::move(reader), &out);
+    }
+
+    auto expected_encoded_result = ::arrow::compute::RunEndEncode(values);
+    EXPECT_TRUE(expected_encoded_result.ok());
+    std::shared_ptr<Array> expected_encoded_array = expected_encoded_result->make_array();
+
+    printf("out = %s, expected_encoded_array = %s\n", out->ToString().c_str(),
+           expected_encoded_array->ToString().c_str());
+    AssertArraysEqual(*expected_encoded_array, *out);
+  }
+};
+
+// TODO: Make this work for ::arrow::LargeBinaryType, ::arrow::StringType and
+// ::arrow::LargeStringType
+typedef ::testing::Types<::arrow::BinaryType> ReeTestTypes;
+
+TYPED_TEST_SUITE(TestParquetRee, ReeTestTypes);
+
+TYPED_TEST(TestParquetRee, SingleColumnRequiredWrite) {
+  std::shared_ptr<Array> values;
+  ASSERT_OK(NonNullArray<TypeParam>(SMALL_SIZE, &values));
+
+  std::shared_ptr<GroupNode> schema =
+      MakeSimpleSchema(*values->type(), Repetition::REQUIRED);
+  ASSERT_NO_FATAL_FAILURE(this->WriteColumn(schema, values));
+
+  ASSERT_NO_FATAL_FAILURE(this->ReadAndReeCheckSingleColumnFile(*values));
+}
+
+TYPED_TEST(TestParquetRee, SingleColumnOptionalReadWrite) {
+  std::shared_ptr<Array> values;
+  ASSERT_OK(NullableArray<TypeParam>(SMALL_SIZE, 10, kDefaultSeed, &values));
+
+  std::shared_ptr<GroupNode> schema =
+      MakeSimpleSchema(*values->type(), Repetition::OPTIONAL);
+  ASSERT_NO_FATAL_FAILURE(this->WriteColumn(schema, values));
+
+  ASSERT_NO_FATAL_FAILURE(this->ReadAndReeCheckSingleColumnFile(*values));
+}
+
+template <typename TestType>
 class TestParquetIO : public ParquetIOTestBase {
  public:
   void PrepareListTable(int64_t size, bool nullable_lists, bool nullable_elements,
