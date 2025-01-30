@@ -2121,15 +2121,20 @@ class ByteArrayReeRecordReader final : public TypedRecordReader<ByteArrayType>,
         ::arrow::default_memory_pool(),
         ::arrow::run_end_encoded(::arrow::int32(), ::arrow::binary()), &builder_));
   }
-  void ReadValuesDense(int64_t values_to_read) override { ParquetException::NYI(); }
+  void ReadValuesDense(int64_t values_to_read) override {
+    int64_t num_decoded = this->current_decoder_->DecodeArrowNonNull(
+        static_cast<int>(values_to_read),
+        checked_cast<::arrow::RunEndEncodedBuilder*>(builder_.get()));
+    CheckNumberDecoded(num_decoded, values_to_read);
+    ResetValues();
+  }
   void ReadValuesSpaced(int64_t values_to_read, int64_t null_count) override {
     printf("ByteArrayReeRecordReader::ReadValuesSpaced(%lld, %lld)\n", values_to_read,
            null_count);
-    auto run_end_encoded_builder_ptr =
-        checked_cast<::arrow::RunEndEncodedBuilder*>(builder_.get());
     int64_t num_decoded = this->current_decoder_->DecodeArrow(
         static_cast<int>(values_to_read), static_cast<int>(null_count),
-        valid_bits_->mutable_data(), values_written_, run_end_encoded_builder_ptr);
+        valid_bits_->mutable_data(), values_written_,
+        checked_cast<::arrow::RunEndEncodedBuilder*>(builder_.get()));
     CheckNumberDecoded(num_decoded, values_to_read - null_count);
     ResetValues();
   }

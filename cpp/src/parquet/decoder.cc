@@ -1190,12 +1190,55 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
       typename EncodingTraits<ByteArrayType>::ReeAccumulator* builder) override {
     printf("DictByteArrayDecoderImpl::DecodeArrow() ReeAccumulator specialization\n");
     int result = 0;
-    PARQUET_THROW_NOT_OK(DecodeArrowDense(num_values, null_count, valid_bits,
-                                          valid_bits_offset, builder, &result));
+    if (null_count == 0) {
+      PARQUET_THROW_NOT_OK(DecodeArrowDenseNonNull(num_values, builder, &result));
+    } else {
+      printf(
+          "Calling DictByteArrayDecoderImpl::DecodeArrowDense(), ReeAccumulator "
+          "specialization\n");
+      PARQUET_THROW_NOT_OK(DecodeArrowDense(num_values, null_count, valid_bits,
+                                            valid_bits_offset, builder, &result));
+    }
     return result;
   }
 
  private:
+  class ReeBuilderHelper {
+   public:
+    ReeBuilderHelper(typename EncodingTraits<ByteArrayType>::ReeAccumulator* builder)
+        : builder_(builder) {};
+
+    Status flushCurrStateToBuilder() {
+      if (curr_val_.has_value()) {
+        auto str_value = ByteArrayToString(*curr_val_);
+        auto data_buffer = ::arrow::Buffer::FromString(str_value);
+        auto scalar = std::make_shared<::arrow::BinaryScalar>(data_buffer);
+        printf("Appending value: %s, repeats: %d \n", str_value.c_str(), curr_repeats_);
+        RETURN_NOT_OK(builder_->AppendScalar(*scalar, curr_repeats_));
+      } else if (curr_repeats_ > 0) {
+        printf("Appending nulls, repeats %d \n", curr_repeats_);
+        RETURN_NOT_OK(builder_->AppendNulls(curr_repeats_));
+      }
+      return Status::OK();
+    }
+
+    Status update(std::optional<parquet::ByteArray> val) {
+      if (val == curr_val_) {
+        ++curr_repeats_;
+      } else {
+        RETURN_NOT_OK(flushCurrStateToBuilder());
+        curr_val_ = val;
+        curr_repeats_ = 1;
+      }
+      return Status::OK();
+    }
+
+   private:
+    std::optional<parquet::ByteArray> curr_val_;
+    int curr_repeats_ = 0;
+    typename EncodingTraits<ByteArrayType>::ReeAccumulator* builder_;
+  };
+
   Status DecodeArrowDense(int num_values, int null_count, const uint8_t* valid_bits,
                           int64_t valid_bits_offset,
                           typename EncodingTraits<ByteArrayType>::ReeAccumulator* builder,
@@ -1210,33 +1253,7 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
     int values_decoded = 0;
     int num_indices = 0;
     int pos_indices = 0;
-
-    struct LastState {
-      std::optional<parquet::ByteArray> lastVal;
-      int numVals = 0;
-    };
-    LastState lastState;
-
-    auto handleStateChange = [&](std::optional<parquet::ByteArray> newVal, bool isLast) {
-      if (newVal == lastState.lastVal && !isLast) {
-        ++lastState.numVals;
-      } else {
-        if (lastState.lastVal.has_value()) {
-          auto str_value = ByteArrayToString(*lastState.lastVal);
-          auto data_buffer = ::arrow::Buffer::FromString(str_value);
-          auto scalar = std::make_shared<::arrow::BinaryScalar>(data_buffer);
-          printf("Appending lastVal: %s, numVals: %d \n",
-                 str_value.c_str(), lastState.numVals);
-          RETURN_NOT_OK(builder->AppendScalar(*scalar, lastState.numVals));
-        } else if (lastState.numVals > 0) {
-          printf("Appending nulls, numVals: %d \n", lastState.numVals);
-          RETURN_NOT_OK(builder->AppendNulls(lastState.numVals));
-        }
-        lastState.lastVal = newVal;
-        lastState.numVals = 1;
-      }
-      return Status::OK();
-    };
+    ReeBuilderHelper helper(builder);
 
     auto visit_valid = [&](int64_t position) -> Status {
       if (num_indices == pos_indices) {
@@ -1252,14 +1269,13 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
       const auto index = indices[pos_indices++];
       RETURN_NOT_OK(IndexInBounds(index));
       const auto& val = dict_values[index];
-      // printf("Read val: %s \n", ByteArrayToString(val).c_str());
-      RETURN_NOT_OK(handleStateChange(val, false));
+      RETURN_NOT_OK(helper.update(val));
       ++values_decoded;
       return Status::OK();
     };
 
     auto visit_null = [&]() -> Status {
-      RETURN_NOT_OK(handleStateChange(std::nullopt, false));
+      RETURN_NOT_OK(helper.update(std::nullopt));
       return Status::OK();
     };
 
@@ -1286,8 +1302,34 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
         }
       }
     }
-    RETURN_NOT_OK(handleStateChange(std::nullopt, true));
+    RETURN_NOT_OK(helper.flushCurrStateToBuilder());
 
+    *out_num_values = values_decoded;
+    return Status::OK();
+  }
+
+  Status DecodeArrowDenseNonNull(
+      int num_values, typename EncodingTraits<ByteArrayType>::ReeAccumulator* builder,
+      int* out_num_values) {
+    constexpr int32_t kBufferSize = 2048;
+    int32_t indices[kBufferSize];
+    int values_decoded = 0;
+    ReeBuilderHelper helper(builder);
+    const auto* dict_values = dictionary_->data_as<ByteArray>();
+    while (values_decoded < num_values) {
+      const int32_t batch_size =
+          std::min<int32_t>(kBufferSize, num_values - values_decoded);
+      const int num_indices = idx_decoder_.GetBatch(indices, batch_size);
+      if (num_indices == 0) ParquetException::EofException();
+      for (int i = 0; i < num_indices; ++i) {
+        auto idx = indices[i];
+        RETURN_NOT_OK(IndexInBounds(idx));
+        const auto& val = dict_values[idx];
+        RETURN_NOT_OK(helper.update(val));
+      }
+      values_decoded += num_indices;
+    }
+    RETURN_NOT_OK(helper.flushCurrStateToBuilder());
     *out_num_values = values_decoded;
     return Status::OK();
   }
@@ -1325,7 +1367,7 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
       const auto index = indices[pos_indices++];
       RETURN_NOT_OK(IndexInBounds(index));
       const auto& val = dict_values[index];
-      // printf("Read val: %s \n", ByteArrayToString(val).c_str());
+      printf("Read val: %s \n", ByteArrayToString(val).c_str());
       RETURN_NOT_OK(helper.PrepareNextInput(val.len));
       RETURN_NOT_OK(helper.Append(val.ptr, static_cast<int32_t>(val.len)));
       ++values_decoded;
@@ -1333,6 +1375,7 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
     };
 
     auto visit_null = [&]() -> Status {
+      printf("Reading null\n");
       RETURN_NOT_OK(helper.AppendNull());
       return Status::OK();
     };

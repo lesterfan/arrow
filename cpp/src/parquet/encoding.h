@@ -341,6 +341,11 @@ class TypedDecoder : virtual public Decoder {
                          typename EncodingTraits<DType>::DictAccumulator* builder) {
     return DecodeArrow(num_values, 0, /*valid_bits=*/NULLPTR, 0, builder);
   }
+
+  int DecodeArrowNonNull(int num_values,
+                         typename EncodingTraits<ByteArrayType>::ReeAccumulator* out) {
+    return DecodeArrow(num_values, 0, /*valid_bits=*/NULLPTR, 0, out);
+  }
 };
 
 template <typename DType>
