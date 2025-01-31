@@ -1248,68 +1248,35 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
                           int64_t valid_bits_offset,
                           typename EncodingTraits<ByteArrayType>::ReeAccumulator* builder,
                           int* out_num_values) {
-    printf(
-        "Starting DictByteArrayDecoderImpl::DecodeArrowDense(), ReeAccumulator "
-        "specialization\n");
-    constexpr int32_t kBufferSize = 1024;
-    int32_t indices[kBufferSize];
-
-    const auto* dict_values = dictionary_->data_as<ByteArray>();
-    int values_decoded = 0;
-    int num_indices = 0;
-    int pos_indices = 0;
+    int total_values_decoded = 0;
+    int non_null_values_decoded = 0;
     ReeBuilderHelper helper(builder);
-
-    auto visit_valid = [&](int64_t position) -> Status {
-      if (num_indices == pos_indices) {
-        // Refill indices buffer
-        const auto batch_size =
-            std::min<int32_t>(kBufferSize, num_values - null_count - values_decoded);
-        num_indices = idx_decoder_.GetBatch(indices, batch_size);
-        if (ARROW_PREDICT_FALSE(num_indices < 1)) {
-          return Status::Invalid("Invalid number of indices: ", num_indices);
-        }
-        pos_indices = 0;
+    const auto* dict_values = dictionary_->data_as<ByteArray>();
+    int64_t valid_bits_index = valid_bits_offset;
+    while (total_values_decoded < num_values) {
+      int32_t idx;
+      bool is_null = false;
+      int num_repeats;
+      bool ok = idx_decoder_.GetWithRepeatsSpaced(&idx, &is_null, &num_repeats,
+                                                  num_values - total_values_decoded, valid_bits,
+                                                  valid_bits_index);
+      if (ARROW_PREDICT_FALSE(!ok)) {
+        break;
       }
-      const auto index = indices[pos_indices++];
-      RETURN_NOT_OK(IndexInBounds(index));
-      const auto& val = dict_values[index];
-      RETURN_NOT_OK(helper.update(val, 1));
-      ++values_decoded;
-      return Status::OK();
-    };
-
-    auto visit_null = [&]() -> Status {
-      RETURN_NOT_OK(helper.update(std::nullopt, 1));
-      return Status::OK();
-    };
-
-    ::arrow::internal::BitBlockCounter bit_blocks(valid_bits, valid_bits_offset,
-                                                  num_values);
-    int64_t position = 0;
-    while (position < num_values) {
-      const auto block = bit_blocks.NextWord();
-      if (block.AllSet()) {
-        for (int64_t i = 0; i < block.length; ++i, ++position) {
-          ARROW_RETURN_NOT_OK(visit_valid(position));
-        }
-      } else if (block.NoneSet()) {
-        for (int64_t i = 0; i < block.length; ++i, ++position) {
-          ARROW_RETURN_NOT_OK(visit_null());
-        }
+      DCHECK_GT(num_repeats, 0);
+      if (is_null) {
+        RETURN_NOT_OK(helper.update(std::nullopt, num_repeats));
       } else {
-        for (int64_t i = 0; i < block.length; ++i, ++position) {
-          if (bit_util::GetBit(valid_bits, valid_bits_offset + position)) {
-            ARROW_RETURN_NOT_OK(visit_valid(position));
-          } else {
-            ARROW_RETURN_NOT_OK(visit_null());
-          }
-        }
+        RETURN_NOT_OK(IndexInBounds(idx));
+        const auto& val = dict_values[idx];
+        RETURN_NOT_OK(helper.update(val, num_repeats));
+        non_null_values_decoded += num_repeats;
       }
+      valid_bits_index += num_repeats;
+      total_values_decoded += num_repeats;
     }
     RETURN_NOT_OK(helper.flushCurrStateToBuilder());
-
-    *out_num_values = values_decoded;
+    *out_num_values = non_null_values_decoded;
     return Status::OK();
   }
 

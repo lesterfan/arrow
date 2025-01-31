@@ -118,6 +118,11 @@ class RleDecoder {
   /// Gets the next run of a single value. Returns false if there are no more.
   template <typename T>
   bool GetWithRepeats(T* val, int* num_repeats, int batch_size);
+  /// Gets the next run of a single value. Returns false if there are no more.
+
+  template <typename T>
+  bool GetWithRepeatsSpaced(T* val, bool* is_null, int* num_repeats, int batch_size,
+                            const uint8_t* valid_bits, int64_t valid_bits_offset);
 
   /// Gets a batch of values.  Returns the number of decoded elements.
   template <typename T>
@@ -318,6 +323,29 @@ inline bool RleDecoder::GetWithRepeats(T* val, int* num_repeats, int batch_size)
     if (!NextCounts<T>()) return false;
     return GetWithRepeats(val, num_repeats, batch_size);
   }
+}
+
+template <typename T>
+inline bool RleDecoder::GetWithRepeatsSpaced(T* val, bool* is_null, int* num_repeats,
+                                             int batch_size, const uint8_t* valid_bits,
+                                             int64_t valid_bits_offset) {
+  DCHECK_GE(bit_width_, 0);
+  arrow::internal::BitRunReader bit_reader(valid_bits, valid_bits_offset,
+                                           /*length=*/batch_size);
+  arrow::internal::BitRun valid_run = bit_reader.NextRun();
+  while (ARROW_PREDICT_FALSE(valid_run.length == 0)) {
+    valid_run = bit_reader.NextRun();
+  }
+  DCHECK_GT(batch_size, 0);
+  DCHECK_GT(valid_run.length, 0);
+  if (valid_run.set) {
+    return GetWithRepeats(val, num_repeats,
+                          std::min(valid_run.length, static_cast<int64_t>(batch_size)));
+  } else {
+    *is_null = true;
+    *num_repeats = valid_run.length;
+  }
+  return true;
 }
 
 template <typename T>
