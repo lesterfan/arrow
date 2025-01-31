@@ -490,9 +490,9 @@ class LeafReader : public ColumnReaderImpl {
         "Making a RecordReader, schema_field_->type->id() = %d, "
         "read_parquet_rle_cols_to_arrow_ree = %d\n",
         field_->type()->id(), read_parquet_rle_cols_to_arrow_ree);
-    record_reader_ = RecordReader::Make(descr_, leaf_info, ctx_->pool,
-                                        field_->type()->id() == ::arrow::Type::DICTIONARY,
-                                        false, read_parquet_rle_cols_to_arrow_ree);
+    record_reader_ = RecordReader::Make(
+        descr_, leaf_info, ctx_->pool, field_->type()->id() == ::arrow::Type::DICTIONARY,
+        false, read_parquet_rle_cols_to_arrow_ree, field_->type());
     NextRowGroup();
   }
 

@@ -843,9 +843,8 @@ class TestParquetRee : public ParquetIOTestBase {
   }
 };
 
-// TODO: Make this work for ::arrow::LargeBinaryType, ::arrow::StringType and
-// ::arrow::LargeStringType
-typedef ::testing::Types<::arrow::BinaryType> ReeTestTypes;
+// TODO: Make this work for ::arrow::LargeBinaryType and ::arrow::LargeStringType
+typedef ::testing::Types<::arrow::StringType, ::arrow::BinaryType> ReeTestTypes;
 
 TYPED_TEST_SUITE(TestParquetRee, ReeTestTypes);
 

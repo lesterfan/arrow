@@ -1206,14 +1206,18 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
   class ReeBuilderHelper {
    public:
     ReeBuilderHelper(typename EncodingTraits<ByteArrayType>::ReeAccumulator* builder)
-        : builder_(builder) {};
+        : builder_(builder),
+          arrow_value_dtype_(
+              std::static_pointer_cast<::arrow::RunEndEncodedType>(builder_->type())
+                  ->value_type()) {};
 
     Status flushCurrStateToBuilder() {
       if (curr_val_.has_value()) {
         auto str_value = ByteArrayToString(*curr_val_);
-        auto data_buffer = ::arrow::Buffer::FromString(str_value);
-        auto scalar = std::make_shared<::arrow::BinaryScalar>(data_buffer);
-        printf("Appending value: %s, repeats: %d \n", str_value.c_str(), curr_repeats_);
+        printf("Appending value: %s, repeats: %d, arrow_value_dtype_ = %s\n",
+               str_value.c_str(), curr_repeats_, arrow_value_dtype_->ToString().c_str());
+        ARROW_ASSIGN_OR_RAISE(std::shared_ptr<::arrow::Scalar> scalar,
+                              ::arrow::MakeScalar(arrow_value_dtype_, str_value));
         RETURN_NOT_OK(builder_->AppendScalar(*scalar, curr_repeats_));
       } else if (curr_repeats_ > 0) {
         printf("Appending nulls, repeats %d \n", curr_repeats_);
@@ -1237,6 +1241,7 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
     std::optional<parquet::ByteArray> curr_val_;
     int curr_repeats_ = 0;
     typename EncodingTraits<ByteArrayType>::ReeAccumulator* builder_;
+    std::shared_ptr<::arrow::DataType> arrow_value_dtype_;
   };
 
   Status DecodeArrowDense(int num_values, int null_count, const uint8_t* valid_bits,

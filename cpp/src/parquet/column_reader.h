@@ -280,7 +280,8 @@ class PARQUET_EXPORT RecordReader {
       const ColumnDescriptor* descr, LevelInfo leaf_info,
       ::arrow::MemoryPool* pool = ::arrow::default_memory_pool(),
       bool read_dictionary = false, bool read_dense_for_nullable = false,
-      bool read_parquet_rle_cols_to_arrow_ree = false);
+      bool read_parquet_rle_cols_to_arrow_ree = false,
+      std::shared_ptr<::arrow::DataType> arrow_ree_values_dtype = nullptr);
 
   virtual ~RecordReader() = default;
 
