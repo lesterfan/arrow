@@ -797,10 +797,9 @@ Status NodeToSchemaField(const Node& node, LevelInfo current_levels,
     } else {
       current_levels.Increment(node);
 
-      printf(
-          "Running PopulateLeaf for node.name() = %s, type = %s, node.is_optional() = "
-          "%d\n",
-          node.name().c_str(), type->name().c_str(), node.is_optional());
+      // printf(
+      //     "Running PopulateLeaf for node.name() = %s, type = %s, node.is_optional() = %d\n",
+      //     node.name().c_str(), type->name().c_str(), node.is_optional());
 
       // A normal (required/optional) primitive node
       return PopulateLeaf(column_index,

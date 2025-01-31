@@ -319,9 +319,9 @@ const int64_t HASHES_OF_LOOPING_BYTES_WITH_SEED_0[32] = {
  *         src[i] = (char) i;
  *     }
  *
- *     printf("without seed\n");
+ *     // printf("without seed\n");
  *     for (int i = 0; i <= N; i++) {
- *        printf("%lldL,\n", (long long) XXH64(src, i, 0));
+ *        // printf("%lldL,\n", (long long) XXH64(src, i, 0));
  *     }
  * }
  */

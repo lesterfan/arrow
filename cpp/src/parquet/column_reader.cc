@@ -675,7 +675,7 @@ class ColumnReaderImplBase {
   }
 
   bool HasNextInternal() {
-    printf("hasNextInternal()\n");
+    // printf("hasNextInternal()\n");
     // Either there is no data page available yet, or the data page has been
     // exhausted
     if (num_buffered_values_ == 0 || num_decoded_values_ == num_buffered_values_) {
@@ -697,7 +697,7 @@ class ColumnReaderImplBase {
 
   // Advance to the next data page
   bool ReadNewPage() {
-    printf("ReadNewPage()\n");
+    // printf("ReadNewPage()\n");
     // Loop until we find the next data page.
     while (true) {
       current_page_ = pager_->NextPage();
@@ -706,7 +706,7 @@ class ColumnReaderImplBase {
         return false;
       }
 
-      printf("current_page_->type() = %d\n", current_page_->type());
+      // printf("current_page_->type() = %d\n", current_page_->type());
       if (current_page_->type() == PageType::DICTIONARY_PAGE) {
         ConfigureDictionary(static_cast<const DictionaryPage*>(current_page_.get()));
         continue;
@@ -718,7 +718,7 @@ class ColumnReaderImplBase {
         return true;
       } else if (current_page_->type() == PageType::DATA_PAGE_V2) {
         const auto* page = static_cast<const DataPageV2*>(current_page_.get());
-        printf("Reading DataPageV2, encoding = %d\n", page->encoding());
+        // printf("Reading DataPageV2, encoding = %d\n", page->encoding());
         int64_t levels_byte_size = InitializeLevelDecodersV2(*page);
         InitializeDataDecoder(*page, levels_byte_size);
         return true;
@@ -733,7 +733,7 @@ class ColumnReaderImplBase {
 
   void ConfigureDictionary(const DictionaryPage* page) {
     int encoding = static_cast<int>(page->encoding());
-    printf("ConfigureDictionary, encoding = %d\n", encoding);
+    // printf("ConfigureDictionary, encoding = %d\n", encoding);
     if (page->encoding() == Encoding::PLAIN_DICTIONARY ||
         page->encoding() == Encoding::PLAIN) {
       encoding = static_cast<int>(Encoding::RLE_DICTIONARY);
@@ -813,10 +813,10 @@ class ColumnReaderImplBase {
   }
 
   int64_t InitializeLevelDecodersV2(const DataPageV2& page) {
-    printf(
-        "InitializeLevelDecoders (i.e. repetition + definition levels). Skipping further "
-        "investigation here for now since I don't care about the repetition + definition "
-        "levels to begin with.\n");
+    // printf(
+    //     "InitializeLevelDecoders (i.e. repetition + definition levels). Skipping
+    //     further " "investigation here for now since I don't care about the repetition +
+    //     definition " "levels to begin with.\n");
     // Read a data page.
     num_buffered_values_ = page.num_values();
 
@@ -854,7 +854,7 @@ class ColumnReaderImplBase {
   // Get a decoder object for this page or create a new decoder if this is the
   // first page with this encoding.
   void InitializeDataDecoder(const DataPage& page, int64_t levels_byte_size) {
-    printf("InitializeDataDecoder()\n");
+    // printf("InitializeDataDecoder()\n");
     const uint8_t* buffer = page.data() + levels_byte_size;
     const int64_t data_size = page.size() - levels_byte_size;
 
@@ -873,7 +873,7 @@ class ColumnReaderImplBase {
     if (it != decoders_.end()) {
       ARROW_DCHECK(it->second.get() != nullptr);
       current_decoder_ = it->second.get();
-      printf("Using the decoder set in ConfigureDictionary()\n");
+      // printf("Using the decoder set in ConfigureDictionary()\n");
     } else {
       switch (encoding) {
         case Encoding::PLAIN:
@@ -968,7 +968,7 @@ class TypedColumnReaderImpl : public TypedColumnReader<DType>,
   }
 
   bool HasNext() override {
-    printf("TypedColumnreaderImpl::HasNext()\n");
+    // printf("TypedColumnreaderImpl::HasNext()\n");
     return this->HasNextInternal();
   }
 
@@ -1106,7 +1106,7 @@ template <typename DType>
 int64_t TypedColumnReaderImpl<DType>::ReadBatch(int64_t batch_size, int16_t* def_levels,
                                                 int16_t* rep_levels, T* values,
                                                 int64_t* values_read) {
-  printf("ReadBatch\n");
+  // printf("ReadBatch\n");
   // HasNext might invoke ReadNewPage until a data page with
   // `available_values_current_page() > 0` is found.
   if (!HasNext()) {
@@ -1273,7 +1273,7 @@ class TypedRecordReader : public TypedColumnReaderImpl<DType>,
   }
 
   const void* ReadDictionary(int32_t* dictionary_length) override {
-    printf("ReadDictionary()\n");  // NOT CALLED AFAICT
+    // printf("ReadDictionary()\n");  // NOT CALLED AFAICT
     if (this->current_decoder_ == nullptr && !this->HasNextInternal()) {
       *dictionary_length = 0;
       return nullptr;
@@ -1294,7 +1294,7 @@ class TypedRecordReader : public TypedColumnReaderImpl<DType>,
   }
 
   int64_t ReadRecords(int64_t num_records) override {
-    printf("ReadRecords(%lld)\n", num_records);
+    // printf("ReadRecords(%lld)\n", num_records);
     if (num_records == 0) return 0;
     // Delimit records, then read values at the end
     int64_t records_read = 0;
@@ -1805,13 +1805,13 @@ class TypedRecordReader : public TypedColumnReaderImpl<DType>,
 
     // Optional fields are always nullable.
     if (read_dense_for_nullable_) {
-      printf("Should never be hit\n");
+      // printf("Should never be hit\n");
       ReadDenseForOptional(start_levels_position, values_to_read);
       // We don't need to update null_count when reading dense. It should be
       // already set to 0.
       ARROW_DCHECK_EQ(*null_count, 0);
     } else {
-      printf("Calling ReadSpacedForOptionalOrRepeated()\n");
+      // printf("Calling ReadSpacedForOptionalOrRepeated()\n");
       ReadSpacedForOptionalOrRepeated(start_levels_position, values_to_read, null_count);
     }
     return records_read;
@@ -1856,7 +1856,7 @@ class TypedRecordReader : public TypedColumnReaderImpl<DType>,
     *null_count = validity_io.null_count;
     ARROW_DCHECK_GE(*values_to_read, 0);
     ARROW_DCHECK_GE(*null_count, 0);
-    printf("Calling ReadValuesSpaced()\n");
+    // printf("Calling ReadValuesSpaced()\n");
     ReadValuesSpaced(validity_io.values_read, *null_count);
   }
 
@@ -1878,17 +1878,17 @@ class TypedRecordReader : public TypedColumnReaderImpl<DType>,
     if (this->max_rep_level_ > 0) {
       // Repeated fields may be nullable or not.
       // This call updates levels_position_.
-      printf("This code path should NOT happen\n");
+      // printf("This code path should NOT happen\n");
       records_read = ReadRepeatedRecords(num_records, &values_to_read, &null_count);
     } else if (this->max_def_level_ > 0) {
       // Non-repeated optional values are always nullable.
       // This call updates levels_position_.
       ARROW_DCHECK(nullable_values());
-      printf("Going to call ReadOptionalRecords\n");
+      // printf("Going to call ReadOptionalRecords\n");
       records_read = ReadOptionalRecords(num_records, &values_to_read, &null_count);
     } else {
       ARROW_DCHECK(!nullable_values());
-      printf("Going to call ReadRequiredRecords\n");
+      // printf("Going to call ReadRequiredRecords\n");
       records_read = ReadRequiredRecords(num_records, &values_to_read);
       // We don't need to update null_count, since it is 0.
     }
@@ -2096,7 +2096,7 @@ class ByteArrayChunkedRecordReader final : public TypedRecordReader<ByteArrayTyp
   }
 
   void ReadValuesSpaced(int64_t values_to_read, int64_t null_count) override {
-    printf("ByteArrayChunkedRecordReader::ReadValuesSpaced()\n");
+    // printf("ByteArrayChunkedRecordReader::ReadValuesSpaced()\n");
     int64_t num_decoded = this->current_decoder_->DecodeArrow(
         static_cast<int>(values_to_read), static_cast<int>(null_count),
         valid_bits_->mutable_data(), values_written_, &accumulator_);
@@ -2121,7 +2121,7 @@ class ByteArrayReeRecordReader final : public TypedRecordReader<ByteArrayType>,
     PARQUET_THROW_NOT_OK(::arrow::MakeBuilder(
         ::arrow::default_memory_pool(),
         ::arrow::run_end_encoded(::arrow::int32(), ::arrow::binary()), &builder_));
-    printf("In ctor, builder_->length() = %lld\n", builder_->length());
+    // printf("In ctor, builder_->length() = %lld\n", builder_->length());
   }
   void ReadValuesDense(int64_t values_to_read) override {
     int64_t num_decoded = this->current_decoder_->DecodeArrowNonNull(
@@ -2129,24 +2129,24 @@ class ByteArrayReeRecordReader final : public TypedRecordReader<ByteArrayType>,
         checked_cast<::arrow::RunEndEncodedBuilder*>(builder_.get()));
     CheckNumberDecoded(num_decoded, values_to_read);
     ResetValues();
-    printf("After ReadValuesDense, builder_->length() = %lld\n", builder_->length());
+    // printf("After ReadValuesDense, builder_->length() = %lld\n", builder_->length());
   }
   void ReadValuesSpaced(int64_t values_to_read, int64_t null_count) override {
-    printf("ByteArrayReeRecordReader::ReadValuesSpaced(%lld, %lld)\n", values_to_read,
-           null_count);
+    // printf("ByteArrayReeRecordReader::ReadValuesSpaced(%lld, %lld)\n", values_to_read,
+    //  null_count);
     int64_t num_decoded = this->current_decoder_->DecodeArrow(
         static_cast<int>(values_to_read), static_cast<int>(null_count),
         valid_bits_->mutable_data(), values_written_,
         checked_cast<::arrow::RunEndEncodedBuilder*>(builder_.get()));
     CheckNumberDecoded(num_decoded, values_to_read - null_count);
     ResetValues();
-    printf("After ReadValuesSpaced, builder_->length() = %lld\n", builder_->length());
+    // printf("After ReadValuesSpaced, builder_->length() = %lld\n", builder_->length());
   }
   std::shared_ptr<::arrow::Array> GetResult() override {
     std::shared_ptr<::arrow::Array> result;
-    printf("In finish, builder_->length() = %lld\n", builder_->length());
+    // printf("In finish, builder_->length() = %lld\n", builder_->length());
     PARQUET_THROW_NOT_OK(builder_->Finish(&result));
-    printf("After finish, builder_->length() = %lld\n", builder_->length());
+    // printf("After finish, builder_->length() = %lld\n", builder_->length());
     return result;
   }
 
@@ -2252,18 +2252,18 @@ void TypedRecordReader<FLBAType>::DebugPrintState() {}
 std::shared_ptr<RecordReader> MakeByteArrayRecordReader(
     const ColumnDescriptor* descr, LevelInfo leaf_info, ::arrow::MemoryPool* pool,
     bool read_dictionary, bool read_dense_for_nullable, bool read_run_end_encoded) {
-  printf("MakeByteArrayRecordReader(), read_run_end_encoded = %d\n",
-         read_run_end_encoded);
+  // printf("MakeByteArrayRecordReader(), read_run_end_encoded = %d\n",
+  //        read_run_end_encoded);
   if (read_dictionary) {
-    printf("Returning a ByteArrayDictionaryRecordReader\n");
+    // printf("Returning a ByteArrayDictionaryRecordReader\n");
     return std::make_shared<ByteArrayDictionaryRecordReader>(descr, leaf_info, pool,
                                                              read_dense_for_nullable);
   } else if (read_run_end_encoded) {
-    printf("Returning a ByteArrayReeRecordReader\n");
+    // printf("Returning a ByteArrayReeRecordReader\n");
     return std::make_shared<ByteArrayReeRecordReader>(
         descr, leaf_info, pool, read_dense_for_nullable);
   } else {
-    printf("Returning a ByteArrayChunkedRecordReader\n");
+    // printf("Returning a ByteArrayChunkedRecordReader\n");
     return std::make_shared<ByteArrayChunkedRecordReader>(descr, leaf_info, pool,
                                                           read_dense_for_nullable);
   }
@@ -2297,10 +2297,10 @@ std::shared_ptr<RecordReader> RecordReader::Make(
     case Type::BYTE_ARRAY: {
       std::ostringstream oss;
       oss << leaf_info;
-      printf(
-          "Returning a ByteArrayRecordReader, leaf_info=%s, "
-          "read_parquet_rle_cols_to_arrow_ree = %d\n",
-          oss.str().c_str(), read_parquet_rle_cols_to_arrow_ree);
+      // printf(
+      //     "Returning a ByteArrayRecordReader, leaf_info=%s, "
+      //     "read_parquet_rle_cols_to_arrow_ree = %d\n",
+      //     oss.str().c_str(), read_parquet_rle_cols_to_arrow_ree);
       return MakeByteArrayRecordReader(
           descr, leaf_info, pool, read_dictionary, read_dense_for_nullable,
           read_parquet_rle_cols_to_arrow_ree);
