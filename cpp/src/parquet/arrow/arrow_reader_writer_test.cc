@@ -837,8 +837,8 @@ class TestParquetRee : public ParquetIOTestBase {
     EXPECT_TRUE(expected_encoded_result.ok());
     std::shared_ptr<Array> expected_encoded_array = expected_encoded_result->make_array();
 
-    printf("out = %s, expected_encoded_array = %s\n", out->ToString().c_str(),
-           expected_encoded_array->ToString().c_str());
+    // printf("out = %s, expected_encoded_array = %s\n", out->ToString().c_str(),
+    //  expected_encoded_array->ToString().c_str());
     AssertArraysEqual(*expected_encoded_array, *out);
   }
 };
