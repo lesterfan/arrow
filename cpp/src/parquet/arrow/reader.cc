@@ -146,9 +146,9 @@ class FileReaderImpl : public FileReader {
         reader_properties_(std::move(properties)) {}
 
   Status Init() {
-    printf("FileReaderImpl::Init; initializing SchemaManifest\n");
-    printf("reader_->metadata()->schema() = %s\n",
-           reader_->metadata()->schema()->ToString().c_str());
+    // printf("FileReaderImpl::Init; initializing SchemaManifest\n");
+    // printf("reader_->metadata()->schema() = %s\n",
+    //  reader_->metadata()->schema()->ToString().c_str());
     auto result = SchemaManifest::Make(reader_->metadata()->schema(),
                                        reader_->metadata()->key_value_metadata(),
                                        reader_properties_, &manifest_);
@@ -286,20 +286,20 @@ class FileReaderImpl : public FileReader {
       const std::vector<Encoding::type>& encodings = column_chunk_metadata->encodings();
       const std::vector<PageEncodingStats>& encoding_stats =
           column_chunk_metadata->encoding_stats();
-      printf(
-          "Read column metadata, compression: %d, total_uncompressed_size: %lld, "
-          "total_compressed_size: %lld\n",
-          compression, total_uncompressed_size, total_compressed_size);
-      printf("has_dictionary: %d, encodings: \n", has_dictionary);
+      // printf(
+      //     "Read column metadata, compression: %d, total_uncompressed_size: %lld, "
+      //     "total_compressed_size: %lld\n",
+      //     compression, total_uncompressed_size, total_compressed_size);
+      // printf("has_dictionary: %d, encodings: \n", has_dictionary);
       for (auto encoding : encodings) {
-        printf("%d ", encoding);
+        // printf("%d ", encoding);
       }
-      printf("\n");
-      printf("encoding_stats: \n");
+      // printf("\n");
+      // printf("encoding_stats: \n");
       for (size_t i = 0; i < encoding_stats.size(); ++i) {
         auto encoding_stat = encoding_stats[i];
-        printf("page %zu, page_type: %d, encoding: %d, count: %d\n", i,
-               encoding_stat.page_type, encoding_stat.encoding, encoding_stat.count);
+        // printf("page %zu, page_type: %d, encoding: %d, count: %d\n", i,
+        //  encoding_stat.page_type, encoding_stat.encoding, encoding_stat.count);
       }
     }
 #ifdef ARROW_WITH_OPENTELEMETRY
@@ -319,7 +319,7 @@ class FileReaderImpl : public FileReader {
 
   Status ReadColumn(int i, const std::vector<int>& row_groups,
                     std::shared_ptr<ChunkedArray>* out) {
-    printf("Entry point for read column\n");
+    // printf("Entry point for read column\n");
     std::unique_ptr<ColumnReader> flat_column_reader;
     RETURN_NOT_OK(GetColumn(i, SomeRowGroupsFactory(row_groups), &flat_column_reader));
     return ReadColumn(i, row_groups, flat_column_reader.get(), out);
@@ -453,7 +453,7 @@ class RowGroupReaderImpl : public RowGroupReader {
       : impl_(impl), row_group_index_(row_group_index) {}
 
   std::shared_ptr<ColumnChunkReader> Column(int column_index) override {
-    printf("Getting column chunk reader for column %d\n", column_index);
+    // printf("Getting column chunk reader for column %d\n", column_index);
     return std::make_shared<ColumnChunkReaderImpl>(impl_, row_group_index_, column_index);
   }
 
@@ -486,10 +486,10 @@ class LeafReader : public ColumnReaderImpl {
         descr_(input_->descr()) {
     bool read_parquet_rle_cols_to_arrow_ree =
         ctx_->reader_properties.get_read_parquet_rle_cols_to_arrow_ree();
-    printf(
-        "Making a RecordReader, schema_field_->type->id() = %d, "
-        "read_parquet_rle_cols_to_arrow_ree = %d\n",
-        field_->type()->id(), read_parquet_rle_cols_to_arrow_ree);
+    // printf(
+    //     "Making a RecordReader, schema_field_->type->id() = %d, "
+    //     "read_parquet_rle_cols_to_arrow_ree = %d\n",
+    //     field_->type()->id(), read_parquet_rle_cols_to_arrow_ree);
     record_reader_ = RecordReader::Make(
         descr_, leaf_info, ctx_->pool, field_->type()->id() == ::arrow::Type::DICTIONARY,
         false, read_parquet_rle_cols_to_arrow_ree, field_->type());
@@ -499,7 +499,7 @@ class LeafReader : public ColumnReaderImpl {
   Status GetDefLevels(const int16_t** data, int64_t* length) final {
     *data = record_reader_->def_levels();
     *length = record_reader_->levels_position();
-    printf("Calculating definition levels\n");
+    // printf("Calculating definition levels\n");
     return Status::OK();
   }
 
@@ -516,7 +516,7 @@ class LeafReader : public ColumnReaderImpl {
 
   Status LoadBatch(int64_t records_to_read) final {
     BEGIN_PARQUET_CATCH_EXCEPTIONS
-    printf("Loading batch, records_to_read: %lld\n", records_to_read);
+    // printf("Loading batch, records_to_read: %lld\n", records_to_read);
     out_ = nullptr;
     record_reader_->Reset();
     // Pre-allocation gives much better performance for flat columns
@@ -526,8 +526,8 @@ class LeafReader : public ColumnReaderImpl {
         break;
       }
       int64_t records_read = record_reader_->ReadRecords(records_to_read);
-      printf("records_read = %lld, records_to_read = %lld", records_read,
-             records_to_read);
+      // printf("records_read = %lld, records_to_read = %lld", records_read,
+      //  records_to_read);
       records_to_read -= records_read;
       if (records_read == 0) {
         NextRowGroup();
@@ -902,7 +902,7 @@ Status GetReader(const SchemaField& field, const std::shared_ptr<Field>& arrow_f
     }
     std::unique_ptr<FileColumnIterator> input(
         ctx->iterator_factory(field.column_index, ctx->reader));
-    printf("Returning a leaf reader\n");
+    // printf("Returning a leaf reader\n");
     *out = std::make_unique<LeafReader>(ctx, arrow_field, std::move(input),
                                         field.level_info);
   } else if (type_id == ::arrow::Type::LIST || type_id == ::arrow::Type::MAP ||
@@ -1270,7 +1270,7 @@ Status FileReaderImpl::GetColumn(int i, FileColumnIteratorFactory iterator_facto
   ctx->filter_leaves = false;
   ctx->reader_properties = reader_properties_;
   std::unique_ptr<ColumnReaderImpl> result;
-  printf("Getting ColumnReader for column %d\n", i);
+  // printf("Getting ColumnReader for column %d\n", i);
   RETURN_NOT_OK(GetReader(manifest_.schema_fields[i], ctx, &result));
   *out = std::move(result);
   return Status::OK();
@@ -1336,9 +1336,9 @@ Future<std::shared_ptr<Table>> FileReaderImpl::DecodeRowGroups(
 }
 
 std::shared_ptr<RowGroupReader> FileReaderImpl::RowGroup(int row_group_index) {
-  printf(
-      "Getting row group reader for row group %d (FileReader is passed in by the user)\n",
-      row_group_index);
+  // printf(
+  //     "Getting row group reader for row group %d (FileReader is passed in by the user)\n",
+  //     row_group_index);
   return std::make_shared<RowGroupReaderImpl>(this, row_group_index);
 }
 
@@ -1373,7 +1373,7 @@ Status FileReader::Make(::arrow::MemoryPool* pool,
                         std::unique_ptr<ParquetFileReader> reader,
                         const ArrowReaderProperties& properties,
                         std::unique_ptr<FileReader>* out) {
-  printf("Making a FileReaderImpl\n");
+  // printf("Making a FileReaderImpl\n");
   *out = std::make_unique<FileReaderImpl>(pool, std::move(reader), properties);
   return static_cast<FileReaderImpl*>(out->get())->Init();
 }

@@ -110,8 +110,8 @@ void NestedListGenerator::VisitAllNestedListConfigurations(
       //   value_width is a power-of-2 (1, 2, 4, 8, 16, max_power_of_2_size=32)
       push_1s();
       do {
-        // for (auto x : list_sizes) printf("%d * ", x);
-        // printf("(%s) %d = %2d\n", type->name().c_str(), type->byte_width(),
+        // for (auto x : list_sizes) // printf("%d * ", x);
+        // // printf("(%s) %d = %2d\n", type->name().c_str(), type->byte_width(),
         // value_width);
         visit(type, list_sizes);
         while (!list_sizes.empty()) {
