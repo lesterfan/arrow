@@ -1226,13 +1226,13 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
       return Status::OK();
     }
 
-    Status update(std::optional<parquet::ByteArray> val) {
+    Status update(std::optional<parquet::ByteArray> val, int num_repeats) {
       if (val == curr_val_) {
-        ++curr_repeats_;
+        curr_repeats_ += num_repeats;
       } else {
         RETURN_NOT_OK(flushCurrStateToBuilder());
         curr_val_ = val;
-        curr_repeats_ = 1;
+        curr_repeats_ = num_repeats;
       }
       return Status::OK();
     }
@@ -1274,13 +1274,13 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
       const auto index = indices[pos_indices++];
       RETURN_NOT_OK(IndexInBounds(index));
       const auto& val = dict_values[index];
-      RETURN_NOT_OK(helper.update(val));
+      RETURN_NOT_OK(helper.update(val, 1));
       ++values_decoded;
       return Status::OK();
     };
 
     auto visit_null = [&]() -> Status {
-      RETURN_NOT_OK(helper.update(std::nullopt));
+      RETURN_NOT_OK(helper.update(std::nullopt, 1));
       return Status::OK();
     };
 
@@ -1316,23 +1316,22 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType>,
   Status DecodeArrowDenseNonNull(
       int num_values, typename EncodingTraits<ByteArrayType>::ReeAccumulator* builder,
       int* out_num_values) {
-    constexpr int32_t kBufferSize = 2048;
-    int32_t indices[kBufferSize];
     int values_decoded = 0;
     ReeBuilderHelper helper(builder);
     const auto* dict_values = dictionary_->data_as<ByteArray>();
     while (values_decoded < num_values) {
-      const int32_t batch_size =
-          std::min<int32_t>(kBufferSize, num_values - values_decoded);
-      const int num_indices = idx_decoder_.GetBatch(indices, batch_size);
-      if (num_indices == 0) ParquetException::EofException();
-      for (int i = 0; i < num_indices; ++i) {
-        auto idx = indices[i];
-        RETURN_NOT_OK(IndexInBounds(idx));
-        const auto& val = dict_values[idx];
-        RETURN_NOT_OK(helper.update(val));
+      int32_t idx;
+      int num_repeats;
+      bool ok =
+          idx_decoder_.GetWithRepeats(&idx, &num_repeats, num_values - values_decoded);
+      if (ARROW_PREDICT_FALSE(!ok)) {
+        break;
       }
-      values_decoded += num_indices;
+      DCHECK_GT(num_repeats, 0);
+      RETURN_NOT_OK(IndexInBounds(idx));
+      const auto& val = dict_values[idx];
+      RETURN_NOT_OK(helper.update(val, num_repeats));
+      values_decoded += num_repeats;
     }
     RETURN_NOT_OK(helper.flushCurrStateToBuilder());
     *out_num_values = values_decoded;
