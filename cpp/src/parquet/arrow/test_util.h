@@ -120,7 +120,9 @@ template <class ArrowType>
   using BuilderType = typename ::arrow::TypeTraits<ArrowType>::BuilderType;
   BuilderType builder;
   for (size_t i = 0; i < size; i++) {
-    RETURN_NOT_OK(builder.Append("test-string"));
+    std::ostringstream oss;
+    oss << "test-string-" << i;
+    RETURN_NOT_OK(builder.Append(oss.str().c_str()));
   }
   return builder.Finish(out);
 }

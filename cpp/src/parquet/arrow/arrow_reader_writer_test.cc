@@ -614,9 +614,11 @@ class ParquetIOTestBase : public ::testing::Test {
   virtual void SetUp() {}
 
   std::unique_ptr<ParquetFileWriter> MakeWriter(
-      const std::shared_ptr<GroupNode>& schema) {
+      const std::shared_ptr<GroupNode>& schema,
+      const std::shared_ptr<WriterProperties>& writer_properties =
+          default_writer_properties()) {
     sink_ = CreateOutputStream();
-    return ParquetFileWriter::Open(sink_, schema);
+    return ParquetFileWriter::Open(sink_, schema, writer_properties);
   }
 
   void ReaderFromSink(
@@ -727,7 +729,9 @@ class ParquetIOTestBase : public ::testing::Test {
 
   template <typename ArrayType>
   void WriteColumn(const std::shared_ptr<GroupNode>& schema,
-                   const std::shared_ptr<ArrayType>& values) {
+                   const std::shared_ptr<ArrayType>& values,
+                   const std::shared_ptr<WriterProperties>& writer_properties =
+                       default_writer_properties()) {
     SchemaDescriptor descriptor;
     ASSERT_NO_THROW(descriptor.Init(schema));
     std::shared_ptr<::arrow::Schema> arrow_schema;
@@ -735,9 +739,9 @@ class ParquetIOTestBase : public ::testing::Test {
     ASSERT_OK_NO_THROW(FromParquetSchema(&descriptor, props, &arrow_schema));
 
     std::unique_ptr<FileWriter> writer;
-    ASSERT_OK_NO_THROW(FileWriter::Make(::arrow::default_memory_pool(),
-                                        MakeWriter(schema), arrow_schema,
-                                        default_arrow_writer_properties(), &writer));
+    ASSERT_OK_NO_THROW(FileWriter::Make(
+        ::arrow::default_memory_pool(), MakeWriter(schema, writer_properties),
+        arrow_schema, default_arrow_writer_properties(), &writer));
     ASSERT_OK_NO_THROW(writer->NewRowGroup(values->length()));
     ASSERT_OK_NO_THROW(writer->WriteColumnChunk(*values));
     ASSERT_OK_NO_THROW(writer->Close());
@@ -848,24 +852,63 @@ typedef ::testing::Types<::arrow::StringType, ::arrow::BinaryType> ReeTestTypes;
 
 TYPED_TEST_SUITE(TestParquetRee, ReeTestTypes);
 
-TYPED_TEST(TestParquetRee, SingleColumnRequiredWrite) {
+TYPED_TEST(TestParquetRee, SingleColumnRequiredReadWriteDictionaryEnabled) {
   std::shared_ptr<Array> values;
   ASSERT_OK(NonNullArray<TypeParam>(SMALL_SIZE, &values));
 
   std::shared_ptr<GroupNode> schema =
       MakeSimpleSchema(*values->type(), Repetition::REQUIRED);
-  ASSERT_NO_FATAL_FAILURE(this->WriteColumn(schema, values));
+  auto writer_properties =
+      parquet::WriterProperties::Builder()
+          .enable_dictionary()  // Globally enable dictionary encoding
+          ->build();
+  ASSERT_NO_FATAL_FAILURE(
+      this->WriteColumn(schema, values, writer_properties));
 
   ASSERT_NO_FATAL_FAILURE(this->ReadAndReeCheckSingleColumnFile(*values));
 }
 
-TYPED_TEST(TestParquetRee, SingleColumnOptionalReadWrite) {
+TYPED_TEST(TestParquetRee, SingleColumnOptionalReadWriteDictionaryEnabled) {
   std::shared_ptr<Array> values;
   ASSERT_OK(NullableArray<TypeParam>(SMALL_SIZE, 10, kDefaultSeed, &values));
 
   std::shared_ptr<GroupNode> schema =
       MakeSimpleSchema(*values->type(), Repetition::OPTIONAL);
-  ASSERT_NO_FATAL_FAILURE(this->WriteColumn(schema, values));
+  auto writer_properties =
+      parquet::WriterProperties::Builder()
+          .enable_dictionary()  // Globally enable dictionary encoding
+          ->build();
+  ASSERT_NO_FATAL_FAILURE(this->WriteColumn(schema, values, writer_properties));
+
+  ASSERT_NO_FATAL_FAILURE(this->ReadAndReeCheckSingleColumnFile(*values));
+}
+
+TYPED_TEST(TestParquetRee, SingleColumnRequiredReadWriteDictionaryDisabled) {
+  std::shared_ptr<Array> values;
+  ASSERT_OK(NonNullArray<TypeParam>(SMALL_SIZE, &values));
+
+  std::shared_ptr<GroupNode> schema =
+      MakeSimpleSchema(*values->type(), Repetition::REQUIRED);
+  auto writer_properties =
+      parquet::WriterProperties::Builder()
+          .disable_dictionary()  // Globally disable dictionary encoding
+          ->build();
+  ASSERT_NO_FATAL_FAILURE(this->WriteColumn(schema, values, writer_properties));
+
+  ASSERT_NO_FATAL_FAILURE(this->ReadAndReeCheckSingleColumnFile(*values));
+}
+
+TYPED_TEST(TestParquetRee, SingleColumnOptionalReadWriteDictionaryDisabled) {
+  std::shared_ptr<Array> values;
+  ASSERT_OK(NullableArray<TypeParam>(SMALL_SIZE, 10, kDefaultSeed, &values));
+
+  std::shared_ptr<GroupNode> schema =
+      MakeSimpleSchema(*values->type(), Repetition::OPTIONAL);
+  auto writer_properties =
+      parquet::WriterProperties::Builder()
+          .disable_dictionary()  // Globally disable dictionary encoding
+          ->build();
+  ASSERT_NO_FATAL_FAILURE(this->WriteColumn(schema, values, writer_properties));
 
   ASSERT_NO_FATAL_FAILURE(this->ReadAndReeCheckSingleColumnFile(*values));
 }
