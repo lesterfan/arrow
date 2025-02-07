@@ -645,6 +645,7 @@ class ReeBuilderHelper {
       auto str_value = ByteArrayToString(*curr_val_);
       printf("Appending value: %s, repeats: %d, arrow_value_dtype_ = %s\n",
              str_value.c_str(), curr_repeats_, arrow_value_dtype_->ToString().c_str());
+      // TODO: Investigate whether storing this scalar will make things faster
       ARROW_ASSIGN_OR_RAISE(std::shared_ptr<::arrow::Scalar> scalar,
                             ::arrow::MakeScalar(arrow_value_dtype_, str_value));
       RETURN_NOT_OK(builder_->AppendScalar(*scalar, curr_repeats_));

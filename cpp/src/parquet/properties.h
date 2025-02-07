@@ -871,8 +871,7 @@ class PARQUET_EXPORT ArrowReaderProperties {
         pre_buffer_(true),
         cache_options_(::arrow::io::CacheOptions::LazyDefaults()),
         coerce_int96_timestamp_unit_(::arrow::TimeUnit::NANO),
-        arrow_extensions_enabled_(false),
-        read_parquet_rle_cols_to_arrow_ree_(false) {}
+        arrow_extensions_enabled_(false) {}
 
   /// \brief Set whether to use the IO thread pool to parse columns in parallel.
   ///
@@ -897,6 +896,27 @@ class PARQUET_EXPORT ArrowReaderProperties {
   /// Return whether the column at the index will be read as dictionary.
   bool read_dictionary(int column_index) const {
     if (read_dict_indices_.find(column_index) != read_dict_indices_.end()) {
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /// \brief Set whether to read a particular column as REEencoded.
+  ///
+  /// If the file metadata contains a serialized Arrow schema, then ...
+  ////
+  /// This is only supported for columns with a Parquet physical type of
+  /// BYTE_ARRAY, such as string or binary types.
+  void set_read_ree_encoded(int column_index, bool read_ree_encoded) {
+    if (read_ree_encoded) {
+      read_ree_encoded_indices_.insert(column_index);
+    } else {
+      read_ree_encoded_indices_.erase(column_index);
+    }
+  }
+  bool read_ree_encoded(int column_index) const {
+    if (read_ree_encoded_indices_.find(column_index) != read_ree_encoded_indices_.end()) {
       return true;
     } else {
       return false;
@@ -955,23 +975,16 @@ class PARQUET_EXPORT ArrowReaderProperties {
   }
   bool get_arrow_extensions_enabled() const { return arrow_extensions_enabled_; }
 
-  void set_read_parquet_rle_cols_to_arrow_ree(bool reads_enabled) {
-    read_parquet_rle_cols_to_arrow_ree_ = reads_enabled;
-  }
-  bool get_read_parquet_rle_cols_to_arrow_ree() const {
-    return read_parquet_rle_cols_to_arrow_ree_;
-  }
-
  private:
   bool use_threads_;
   std::unordered_set<int> read_dict_indices_;
+  std::unordered_set<int> read_ree_encoded_indices_;
   int64_t batch_size_;
   bool pre_buffer_;
   ::arrow::io::IOContext io_context_;
   ::arrow::io::CacheOptions cache_options_;
   ::arrow::TimeUnit::type coerce_int96_timestamp_unit_;
   bool arrow_extensions_enabled_;
-  bool read_parquet_rle_cols_to_arrow_ree_;
 };
 
 /// EXPERIMENTAL: Constructs the default ArrowReaderProperties

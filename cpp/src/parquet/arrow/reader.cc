@@ -484,15 +484,12 @@ class LeafReader : public ColumnReaderImpl {
         field_(std::move(field)),
         input_(std::move(input)),
         descr_(input_->descr()) {
-    bool read_parquet_rle_cols_to_arrow_ree =
-        ctx_->reader_properties.get_read_parquet_rle_cols_to_arrow_ree();
     printf(
-        "Making a RecordReader, schema_field_->type->id() = %d, "
-        "read_parquet_rle_cols_to_arrow_ree = %d\n",
-        field_->type()->id(), read_parquet_rle_cols_to_arrow_ree);
+        "Making a RecordReader, schema_field_->type->id() = %d, schema_field_->type() = %s\n",
+        field_->type()->id(), field_->type()->ToString().c_str());
     record_reader_ = RecordReader::Make(
         descr_, leaf_info, ctx_->pool, field_->type()->id() == ::arrow::Type::DICTIONARY,
-        false, read_parquet_rle_cols_to_arrow_ree, field_->type());
+        false, field_->type()->id() == ::arrow::Type::RUN_END_ENCODED);
     NextRowGroup();
   }
 
@@ -526,7 +523,7 @@ class LeafReader : public ColumnReaderImpl {
         break;
       }
       int64_t records_read = record_reader_->ReadRecords(records_to_read);
-      printf("records_read = %lld, records_to_read = %lld", records_read,
+      printf("records_read = %lld, records_to_read = %lld\n", records_read,
              records_to_read);
       records_to_read -= records_read;
       if (records_read == 0) {
@@ -1326,6 +1323,7 @@ Future<std::shared_ptr<Table>> FileReaderImpl::DecodeRowGroups(
       }
     }
     auto table = Table::Make(std::move(result_schema), columns, num_rows);
+    printf("Validating table\n");
     RETURN_NOT_OK(table->Validate());
     return table;
   };
