@@ -47,3 +47,8 @@ add_executable(reproduce_experiment reproduce_experiment.cc)
 target_link_libraries(reproduce_experiment PRIVATE gflags
                                                    Arrow::arrow_shared
                                                    Parquet::parquet_shared)
+
+add_executable(read_row_group_range read_row_group_range.cc)
+target_link_libraries(read_row_group_range PRIVATE gflags
+                                                   Arrow::arrow_shared
+                                                   Parquet::parquet_shared)
