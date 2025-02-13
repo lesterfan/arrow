@@ -21,6 +21,7 @@
 #include "arrow/array/builder_decimal.h"
 #include "arrow/datum.h"
 #include "arrow/record_batch.h"
+#include "arrow/table.h"
 #include "arrow/tensor.h"
 #include "arrow/testing/gtest_util.h"
 #include "arrow/testing/random.h"
@@ -171,4 +172,17 @@ TEST_F(TestTensorFromJSON, FromJSON) {
   EXPECT_TRUE(tensor_expected->Equals(*result));
 }
 
+TEST(RunEndEncodeGtestUtilTest, SchemaTypeIsModified) {
+  std::shared_ptr<Table> table =
+      arrow::TableFromJSON(arrow::schema({arrow::field("col", arrow::utf8())}), {R"([
+      {"col": "a"},
+      {"col": "b"},
+      {"col": "c"},
+      {"col": "d"}
+    ])"});
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Table> ree_table,
+                       RunEndEncodeTableColumns(*table, {0}));
+  ASSERT_TRUE(ree_table->schema()->field(0)->type()->Equals(
+      arrow::run_end_encoded(arrow::int32(), arrow::utf8())));
+}
 }  // namespace arrow
