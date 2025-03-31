@@ -559,7 +559,7 @@ Status TransferDictionary(RecordReader* reader, MemoryPool* pool,
   return Status::OK();
 }
 
-Status TransferRunEndEncoded(RecordReader* reader,
+Status TransferRunEndEncoded(RecordReader* reader, MemoryPool* pool,
                              const std::shared_ptr<DataType>& logical_value_type,
                              bool nullable, std::shared_ptr<ChunkedArray>* out) {
   auto ree_reader = dynamic_cast<ReeRecordReader*>(reader);
@@ -571,7 +571,7 @@ Status TransferRunEndEncoded(RecordReader* reader,
   printf("Finished getting result\n");
   *out = std::make_shared<ChunkedArray>(result);
   if (!logical_value_type->Equals(*(*out)->type())) {
-    ARROW_ASSIGN_OR_RAISE(*out, (*out)->View(logical_value_type));
+    ARROW_ASSIGN_OR_RAISE(*out, ViewOrCastChunkedArray(*out, pool, logical_value_type));
   }
   if (!nullable) {
     ::arrow::ArrayVector chunks = (*out)->chunks();
@@ -591,7 +591,7 @@ Status TransferBinary(RecordReader* reader, MemoryPool* pool,
   }
   if (reader->read_ree_encoded()) {
     return TransferRunEndEncoded(
-        reader, ::arrow::run_end_encoded(::arrow::int32(), logical_type_field->type()),
+        reader, pool, ::arrow::run_end_encoded(::arrow::int32(), logical_type_field->type()),
         logical_type_field->nullable(), out);
   }
 
@@ -873,7 +873,7 @@ Status TransferColumnData(RecordReader* reader,
       result = chunked_result;
     } break;
     case ::arrow::Type::RUN_END_ENCODED: {
-      RETURN_NOT_OK(TransferRunEndEncoded(reader, value_field->type(),
+      RETURN_NOT_OK(TransferRunEndEncoded(reader, pool, value_field->type(),
                                           value_field->nullable(), &chunked_result));
       result = chunked_result;
     } break;
