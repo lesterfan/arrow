@@ -121,7 +121,7 @@ if(UNIX)
     set(CMAKE_INSTALL_NAME_DIR "@rpath")
     set(CMAKE_INSTALL_RPATH "@loader_path/")
   else()
-    set(CMAKE_INSTALL_RPATH "\$ORIGIN")
+    set(CMAKE_INSTALL_RPATH "\$ORIGIN:/Users/lester/work/dist-19.0.1/lib")
   endif()
 endif()
 

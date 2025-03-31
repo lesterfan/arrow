@@ -949,15 +949,15 @@ class PARQUET_EXPORT ArrowReaderProperties {
   ////
   /// This is only supported for columns with a Parquet physical type of
   /// BYTE_ARRAY, such as string or binary types.
-  void set_read_ree_encoded(int column_index, bool read_ree_encoded) {
-    if (read_ree_encoded) {
-      read_ree_encoded_indices_.insert(column_index);
+  void set_read_ree(int column_index, bool read_ree) {
+    if (read_ree) {
+      read_ree_indices_.insert(column_index);
     } else {
-      read_ree_encoded_indices_.erase(column_index);
+      read_ree_indices_.erase(column_index);
     }
   }
-  bool read_ree_encoded(int column_index) const {
-    if (read_ree_encoded_indices_.find(column_index) != read_ree_encoded_indices_.end()) {
+  bool read_ree(int column_index) const {
+    if (read_ree_indices_.find(column_index) != read_ree_indices_.end()) {
       return true;
     } else {
       return false;
@@ -1028,7 +1028,7 @@ class PARQUET_EXPORT ArrowReaderProperties {
  private:
   bool use_threads_;
   std::unordered_set<int> read_dict_indices_;
-  std::unordered_set<int> read_ree_encoded_indices_;
+  std::unordered_set<int> read_ree_indices_;
   int64_t batch_size_;
   bool pre_buffer_;
   ::arrow::io::IOContext io_context_;

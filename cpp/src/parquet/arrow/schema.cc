@@ -494,7 +494,7 @@ bool IsRunEndEncodedReadSupported(const ArrowType& type) {
   if (ctx->properties.read_dictionary(column_index) &&
       IsDictionaryReadSupported(*storage_type)) {
     return ::arrow::dictionary(::arrow::int32(), storage_type);
-  } else if (ctx->properties.read_ree_encoded(column_index) &&
+  } else if (ctx->properties.read_ree(column_index) &&
              IsRunEndEncodedReadSupported(*storage_type)) {
     return ::arrow::run_end_encoded(::arrow::int32(), storage_type);
   }

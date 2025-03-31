@@ -77,7 +77,7 @@ arrow::Status readColumnOfParquetFile(
       infile, arrow::io::ReadableFile::Open(filename, arrow::default_memory_pool()));
   parquet::ArrowReaderProperties properties = parquet::default_arrow_reader_properties();
   for (int ree_encoded_column_index : ree_encoded_column_indices) {
-    properties.set_read_ree_encoded(ree_encoded_column_index, true);
+    properties.set_read_ree(ree_encoded_column_index, true);
   }
 
   std::unique_ptr<parquet::arrow::FileReader> reader;

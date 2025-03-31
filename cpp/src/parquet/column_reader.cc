@@ -2111,7 +2111,7 @@ class ByteArrayReeRecordReader final : public TypedRecordReader<ByteArrayType>,
                            ::arrow::MemoryPool* pool, bool read_dense_for_nullable)
       : TypedRecordReader<ByteArrayType>(descr, leaf_info, pool,
                                          read_dense_for_nullable) {
-    read_ree_encoded_ = true;
+    read_ree_ = true;
     ARROW_DCHECK_EQ(descr_->physical_type(), Type::BYTE_ARRAY);
     PARQUET_THROW_NOT_OK(::arrow::MakeBuilder(
         ::arrow::default_memory_pool(),

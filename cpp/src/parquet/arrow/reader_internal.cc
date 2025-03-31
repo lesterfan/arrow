@@ -589,7 +589,7 @@ Status TransferBinary(RecordReader* reader, MemoryPool* pool,
         reader, pool, ::arrow::dictionary(::arrow::int32(), logical_type_field->type()),
         logical_type_field->nullable(), out);
   }
-  if (reader->read_ree_encoded()) {
+  if (reader->read_ree()) {
     return TransferRunEndEncoded(
         reader, pool, ::arrow::run_end_encoded(::arrow::int32(), logical_type_field->type()),
         logical_type_field->nullable(), out);

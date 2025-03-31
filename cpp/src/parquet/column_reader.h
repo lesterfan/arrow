@@ -380,7 +380,7 @@ class PARQUET_EXPORT RecordReader {
   /// \brief True if reading directly as Arrow dictionary-encoded
   bool read_dictionary() const { return read_dictionary_; }
 
-  bool read_ree_encoded() const { return read_ree_encoded_; }
+  bool read_ree() const { return read_ree_; }
 
   /// \brief True if reading dense for nullable columns.
   bool read_dense_for_nullable() const { return read_dense_for_nullable_; }
@@ -433,7 +433,7 @@ class PARQUET_EXPORT RecordReader {
   int64_t levels_capacity_;
 
   bool read_dictionary_ = false;
-  bool read_ree_encoded_ = false;
+  bool read_ree_ = false;
   // If true, we will not leave any space for the null values in the values_
   // vector or fill nulls values in BinaryRecordReader/DictionaryRecordReader.
   //

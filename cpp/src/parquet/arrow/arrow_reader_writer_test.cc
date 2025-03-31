@@ -455,7 +455,7 @@ void DoSimpleRoundtrip(const std::shared_ptr<Table>& table, bool use_threads,
   ArrowReaderProperties arrow_reader_properties;
   if (read_parquet_rle_cols_to_arrow_ree) {
     for (int i = 0; i < table->num_columns(); ++i) {
-      arrow_reader_properties.set_read_ree_encoded(i, true);
+      arrow_reader_properties.set_read_ree(i, true);
     }
   }
   ASSERT_OK_NO_THROW(builder.memory_pool(::arrow::default_memory_pool())
@@ -488,7 +488,7 @@ void DoRoundTripWithBatches(
   arrow_reader_properties.set_batch_size(row_group_size - 1);
   if (read_parquet_rle_cols_to_arrow_ree) {
     for (int i = 0; i < table->num_columns(); ++i) {
-      arrow_reader_properties.set_read_ree_encoded(i, true);
+      arrow_reader_properties.set_read_ree(i, true);
     }
   }
   ASSERT_OK_NO_THROW(builder.memory_pool(::arrow::default_memory_pool())
@@ -858,7 +858,7 @@ class TestParquetRee : public ParquetIOTestBase {
     std::unique_ptr<FileReader> reader;
     {
       ArrowReaderProperties properties = default_arrow_reader_properties();
-      properties.set_read_ree_encoded(0, true);
+      properties.set_read_ree(0, true);
       ReaderFromSink(&reader, std::move(properties));
     }
     return reader;
