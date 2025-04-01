@@ -2269,7 +2269,7 @@ std::shared_ptr<RecordReader> MakeByteArrayRecordReader(
 std::shared_ptr<RecordReader> RecordReader::Make(
     const ColumnDescriptor* descr, LevelInfo leaf_info, MemoryPool* pool,
     bool read_dictionary, bool read_dense_for_nullable,
-    bool read_parquet_rle_cols_to_arrow_ree) {
+    bool read_ree) {
   switch (descr->physical_type()) {
     case Type::BOOLEAN:
       return std::make_shared<TypedRecordReader<BooleanType>>(descr, leaf_info, pool,
@@ -2294,11 +2294,11 @@ std::shared_ptr<RecordReader> RecordReader::Make(
       oss << leaf_info;
       printf(
           "Returning a ByteArrayRecordReader, leaf_info=%s, "
-          "read_parquet_rle_cols_to_arrow_ree = %d\n",
-          oss.str().c_str(), read_parquet_rle_cols_to_arrow_ree);
+          "read_ree = %d\n",
+          oss.str().c_str(), read_ree);
       return MakeByteArrayRecordReader(descr, leaf_info, pool, read_dictionary,
                                        read_dense_for_nullable,
-                                       read_parquet_rle_cols_to_arrow_ree);
+                                       read_ree);
     }
     case Type::FIXED_LEN_BYTE_ARRAY:
       return std::make_shared<FLBARecordReader>(descr, leaf_info, pool,

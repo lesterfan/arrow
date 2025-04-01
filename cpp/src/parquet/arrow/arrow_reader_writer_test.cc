@@ -444,7 +444,7 @@ void DoSimpleRoundtrip(const std::shared_ptr<Table>& table, bool use_threads,
                        std::shared_ptr<Table>* out,
                        const std::shared_ptr<ArrowWriterProperties>& arrow_properties =
                            default_arrow_writer_properties(),
-                       bool read_parquet_rle_cols_to_arrow_ree = false) {
+                       bool read_ree = false) {
   std::shared_ptr<Buffer> buffer;
   ASSERT_NO_FATAL_FAILURE(
       WriteTableToBuffer(table, row_group_size, arrow_properties, &buffer));
@@ -453,7 +453,7 @@ void DoSimpleRoundtrip(const std::shared_ptr<Table>& table, bool use_threads,
   FileReaderBuilder builder;
   ASSERT_OK_NO_THROW(builder.Open(std::make_shared<BufferReader>(buffer)));
   ArrowReaderProperties arrow_reader_properties;
-  if (read_parquet_rle_cols_to_arrow_ree) {
+  if (read_ree) {
     for (int i = 0; i < table->num_columns(); ++i) {
       arrow_reader_properties.set_read_ree(i, true);
     }
@@ -476,7 +476,7 @@ void DoRoundTripWithBatches(
     const std::vector<int>& column_subset, std::shared_ptr<Table>* out,
     const std::shared_ptr<ArrowWriterProperties>& arrow_writer_properties =
         default_arrow_writer_properties(),
-    bool read_parquet_rle_cols_to_arrow_ree = false) {
+    bool read_ree = false) {
   std::shared_ptr<Buffer> buffer;
   ASSERT_NO_FATAL_FAILURE(
       WriteTableToBuffer(table, row_group_size, arrow_writer_properties, &buffer));
@@ -486,7 +486,7 @@ void DoRoundTripWithBatches(
   ASSERT_OK_NO_THROW(builder.Open(std::make_shared<BufferReader>(buffer)));
   ArrowReaderProperties arrow_reader_properties;
   arrow_reader_properties.set_batch_size(row_group_size - 1);
-  if (read_parquet_rle_cols_to_arrow_ree) {
+  if (read_ree) {
     for (int i = 0; i < table->num_columns(); ++i) {
       arrow_reader_properties.set_read_ree(i, true);
     }
@@ -513,9 +513,9 @@ void DoRoundTripWithBatches(
 void CheckSimpleRoundtrip(const std::shared_ptr<Table>& table, int64_t row_group_size,
                           const std::shared_ptr<ArrowWriterProperties>&
                               arrow_writer_properties = default_arrow_writer_properties(),
-                          bool read_parquet_rle_cols_to_arrow_ree = false) {
+                          bool read_ree = false) {
   std::shared_ptr<Table> expected_table = table;
-  if (read_parquet_rle_cols_to_arrow_ree) {
+  if (read_ree) {
     std::vector<int> column_indices(table->num_columns());
     std::iota(column_indices.begin(), column_indices.end(), 0);
     ASSERT_OK_AND_ASSIGN(expected_table,
@@ -525,7 +525,7 @@ void CheckSimpleRoundtrip(const std::shared_ptr<Table>& table, int64_t row_group
   std::shared_ptr<Table> result;
   ASSERT_NO_FATAL_FAILURE(
       DoSimpleRoundtrip(table, false /* use_threads */, row_group_size, {}, &result,
-                        arrow_writer_properties, read_parquet_rle_cols_to_arrow_ree));
+                        arrow_writer_properties, read_ree));
   ::arrow::AssertSchemaEqual(*expected_table->schema(), *result->schema(),
                              /*check_metadata=*/false);
   ASSERT_OK(result->ValidateFull());
@@ -536,7 +536,7 @@ void CheckSimpleRoundtrip(const std::shared_ptr<Table>& table, int64_t row_group
 
   ASSERT_NO_FATAL_FAILURE(DoRoundTripWithBatches(
       table, false /* use_threads */, row_group_size, {}, &result,
-      arrow_writer_properties, read_parquet_rle_cols_to_arrow_ree));
+      arrow_writer_properties, read_ree));
   ::arrow::AssertSchemaEqual(*expected_table->schema(), *result->schema(),
                              /*check_metadata=*/false);
   ASSERT_OK(result->ValidateFull());
@@ -756,9 +756,9 @@ class ParquetIOTestBase : public ::testing::Test {
   void CheckRoundTrip(const std::shared_ptr<Table>& table,
                       const std::shared_ptr<ArrowWriterProperties>&
                           arrow_writer_properties = default_arrow_writer_properties(),
-                      bool read_parquet_rle_cols_to_arrow_ree = false) {
+                      bool read_ree = false) {
     CheckSimpleRoundtrip(table, table->num_rows(), arrow_writer_properties,
-                         read_parquet_rle_cols_to_arrow_ree);
+                         read_ree);
   }
 
   template <typename ArrayType>
@@ -882,7 +882,7 @@ class TestParquetRee : public ParquetIOTestBase {
 
   void CheckReeRoundTrip(const std::shared_ptr<Table>& table) {
     CheckSimpleRoundtrip(table, table->num_rows(), default_arrow_writer_properties(),
-                         true /* read_parquet_rle_cols_to_arrow_ree */);
+                         true /* read_ree */);
   }
 };
 
@@ -960,7 +960,7 @@ TYPED_TEST(TestParquetRee, SingleColumnTableOptionalReadWrite) {
   std::shared_ptr<Table> table = MakeSimpleTable(values, true);
   ASSERT_NO_FATAL_FAILURE(
       this->CheckRoundTrip(table, default_arrow_writer_properties(),
-                           true /* read_parquet_rle_cols_to_arrow_ree */));
+                           true /* read_ree */));
 }
 
 template <typename TestType>
