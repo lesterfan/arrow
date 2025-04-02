@@ -41,3 +41,11 @@ target_link_libraries(compute_example PRIVATE Arrow::arrow_shared)
 
 add_executable(dataset_example dataset_example.cc)
 target_link_libraries(dataset_example PRIVATE ArrowDataset::arrow_dataset_shared)
+
+add_executable(reproduce_experiment reproduce_experiment.cc)
+target_link_libraries(reproduce_experiment PRIVATE Arrow::arrow_shared
+                                                   Parquet::parquet_shared)
+
+add_executable(minimal_repro minimal_repro.cc)
+target_link_libraries(minimal_repro PRIVATE Arrow::arrow_shared
+                                                   Parquet::parquet_shared)
