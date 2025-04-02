@@ -321,6 +321,7 @@ class FileSerializer : public ParquetFileWriter::Contents {
   }
 
   void Close() override {
+    printf("FileSerializer::Close()\n");
     if (is_open_) {
       // If any functions here raise an exception, we set is_open_ to be false
       // so that this does not get called again (possibly causing segfault)
@@ -335,6 +336,9 @@ class FileSerializer : public ParquetFileWriter::Contents {
 
       // Write magic bytes and metadata
       auto file_encryption_properties = properties_->file_encryption_properties();
+
+      printf("is_open_ = %d, file_encryption_properties = %p\n", is_open_,
+             file_encryption_properties);
 
       if (file_encryption_properties == nullptr) {  // Non encrypted file.
         file_metadata_ = metadata_->Finish(key_value_metadata_);
@@ -535,6 +539,11 @@ void WriteFileMetaData(const FileMetaData& file_metadata, ArrowOutputStream* sin
   // Write MetaData
   PARQUET_ASSIGN_OR_THROW(int64_t position, sink->Tell());
   uint32_t metadata_len = static_cast<uint32_t>(position);
+
+  {
+    printf("Writing file_metadata, size: %d, contents: %s\n", file_metadata.size(),
+           file_metadata.SerializeToString().c_str());
+  }
 
   file_metadata.WriteTo(sink);
   PARQUET_ASSIGN_OR_THROW(position, sink->Tell());

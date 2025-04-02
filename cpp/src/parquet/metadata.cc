@@ -1906,6 +1906,110 @@ void RowGroupMetaDataBuilder::Finish(int64_t total_bytes_written,
   impl_->Finish(total_bytes_written, row_group_ordinal);
 }
 
+namespace chatgpt {
+
+// Generic fallback: for types that don’t allocate dynamic memory, we return 0.
+template <typename T>
+inline size_t MemoryUsage(const T&) {
+  return 0;
+}
+
+// Overload for std::string: use its capacity as an approximation.
+inline size_t MemoryUsage(const std::string& s) { return s.capacity(); }
+
+// Overload for std::vector<T>: add the allocated raw memory plus recursively
+// the memory used by each element.
+template <typename T>
+inline size_t MemoryUsageVector(const std::vector<T>& vec) {
+  size_t total = vec.capacity() * sizeof(T);
+  for (const auto& elem : vec) {
+    total += MemoryUsage(elem);  // calls our overloads in this namespace
+  }
+  return total;
+}
+
+// Overload for parquet::format::SizeStatistics
+inline size_t MemoryUsage(const parquet::format::SizeStatistics& stats) {
+  size_t total = sizeof(stats);
+  total += MemoryUsageVector(stats.repetition_level_histogram);
+  total += MemoryUsageVector(stats.definition_level_histogram);
+  return total;
+}
+
+// Overload for parquet::format::Statistics
+inline size_t MemoryUsage(const parquet::format::Statistics& stat) {
+  size_t total = sizeof(stat);
+  total += MemoryUsage(stat.max);
+  total += MemoryUsage(stat.min);
+  total += MemoryUsage(stat.max_value);
+  total += MemoryUsage(stat.min_value);
+  return total;
+}
+
+// Overload for parquet::format::KeyValue
+inline size_t MemoryUsage(const parquet::format::KeyValue& kv) {
+  size_t total = sizeof(kv);
+  total += MemoryUsage(kv.key);
+  total += MemoryUsage(kv.value);
+  return total;
+}
+
+// Overload for parquet::format::ColumnMetaData
+inline size_t MemoryUsage(const parquet::format::ColumnMetaData& cmd) {
+  size_t total = sizeof(cmd);
+  total += MemoryUsageVector(cmd.encodings);           // vector<Encoding::type>
+  total += MemoryUsageVector(cmd.path_in_schema);      // vector<string>
+  total += MemoryUsageVector(cmd.key_value_metadata);  // vector<KeyValue>
+  total += MemoryUsageVector(cmd.encoding_stats);      // vector<PageEncodingStats>
+  total += MemoryUsage(cmd.size_statistics);           // SizeStatistics
+  return total;
+}
+
+// Overload for parquet::format::ColumnCryptoMetaData
+inline size_t MemoryUsage(const parquet::format::ColumnCryptoMetaData& ccmd) {
+  return sizeof(ccmd);
+}
+
+// Overload for parquet::format::ColumnChunk
+inline size_t MemoryUsage(const parquet::format::ColumnChunk& cc) {
+  size_t total = sizeof(cc);
+  total += MemoryUsage(cc.file_path);
+  total += MemoryUsage(cc.encrypted_column_metadata);
+  total += MemoryUsage(cc.meta_data);
+  total += MemoryUsage(cc.crypto_metadata);
+  return total;
+}
+
+// Overload for parquet::format::SortingColumn (assumed to be plain data)
+inline size_t MemoryUsage(const parquet::format::SortingColumn& sc) { return sizeof(sc); }
+
+// Overload for parquet::format::RowGroup: sum up its fixed size plus its dynamic vectors.
+inline size_t MemoryUsage(const parquet::format::RowGroup& rg) {
+  size_t total = sizeof(rg);
+  total += MemoryUsageVector(rg.columns);          // vector<ColumnChunk>
+  total += MemoryUsageVector(rg.sorting_columns);  // vector<SortingColumn>
+  return total;
+}
+
+// Overload for vector of parquet::format::RowGroup:
+// account for the vector container's allocated array plus each row group’s dynamic usage.
+inline size_t MemoryUsage(const std::vector<parquet::format::RowGroup>& row_groups) {
+  size_t total =
+      sizeof(row_groups) + row_groups.capacity() * sizeof(parquet::format::RowGroup);
+  for (const auto& rg : row_groups) {
+    total += MemoryUsage(rg);
+  }
+  return total;
+}
+
+// The precise calculation function for our metadata (i.e. row_groups_)
+size_t CalculateRowGroupsMemory(
+    const std::vector<parquet::format::RowGroup>& row_groups) {
+  return MemoryUsage(row_groups);
+}
+
+}  // namespace chatgpt
+
 // file metadata
 class FileMetaDataBuilder::FileMetaDataBuilderImpl {
  public:
@@ -1924,6 +2028,13 @@ class FileMetaDataBuilder::FileMetaDataBuilderImpl {
     row_groups_.emplace_back();
     current_row_group_builder_ =
         RowGroupMetaDataBuilder::Make(properties_, schema_, &row_groups_.back());
+    // printf("FileMetaDataBuilder::AppendRowGroup called, row_groups_.size() = %d\n",
+    //        row_groups_.size());
+    // for (int i = 0; i < row_groups_.size(); ++i) {
+    //   std::ostringstream oss;
+    //   row_groups_[i].printTo(oss);
+    //   printf("row group metadata %d: %s\n", i, oss.str().c_str());
+    // }
     return current_row_group_builder_.get();
   }
 
@@ -1963,6 +2074,10 @@ class FileMetaDataBuilder::FileMetaDataBuilderImpl {
 
   std::unique_ptr<FileMetaData> Finish(
       const std::shared_ptr<const KeyValueMetadata>& key_value_metadata) {
+    printf(
+        "FileMetaDataBuilderImpl::Finish() called, row_groups_.size() = %zu, "
+        "approx. byte size of the metadata = %lu\n",
+        row_groups_.size(), chatgpt::CalculateRowGroupsMemory(row_groups_));
     int64_t total_rows = 0;
     for (const auto& row_group : row_groups_) {
       total_rows += row_group.num_rows;

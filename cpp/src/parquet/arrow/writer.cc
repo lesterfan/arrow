@@ -555,6 +555,7 @@ Result<std::unique_ptr<FileWriter>> FileWriter::Open(
     std::shared_ptr<::arrow::io::OutputStream> sink,
     std::shared_ptr<WriterProperties> properties,
     std::shared_ptr<ArrowWriterProperties> arrow_properties) {
+  printf("FileWriter::Open()\n");
   std::shared_ptr<SchemaDescriptor> parquet_schema;
   RETURN_NOT_OK(
       ToParquetSchema(&schema, *properties, *arrow_properties, &parquet_schema));
