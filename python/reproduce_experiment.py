@@ -14,11 +14,11 @@ def generate_field_data(num_rows: int, field):
         raise NotImplementedError("Synthetic data not implemented for type: " + str(t))
 
 def repro():
-    file_name = "20250403_synthetic_py.parquet"
-    total_rows = 100_000_000
-    chunk_size = 10_000
-    num_int_columns = 10
-    num_string_columns = 10
+    file_name = "20250407_synthetic_py.parquet"
+    total_rows = 3_000_000_000
+    chunk_size = 1_000_000
+    num_int_columns = 50
+    num_string_columns = 50
     fields = [
         *[pa.field("int_column_" + str(i), pa.int64()) for i in range(num_int_columns)],
         *[pa.field("str_column_" + str(i), pa.string()) for i in range(num_string_columns)]

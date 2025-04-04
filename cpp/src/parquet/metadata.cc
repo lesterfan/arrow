@@ -1915,16 +1915,23 @@ inline size_t MemoryUsage(const T&) {
 }
 
 // Overload for std::string: use its capacity as an approximation.
-inline size_t MemoryUsage(const std::string& s) { return s.capacity(); }
+inline size_t MemoryUsage(const std::string& s) {
+  size_t total = s.capacity();
+  printf("MemoryUsage(string s = %s) = %zu\n", s.c_str(), total);
+  return total;
+}
 
 // Overload for std::vector<T>: add the allocated raw memory plus recursively
 // the memory used by each element.
 template <typename T>
 inline size_t MemoryUsageVector(const std::vector<T>& vec) {
   size_t total = vec.capacity() * sizeof(T);
+  printf("vec.size() = %d, sizeof(T) = %d\n", vec.size(), sizeof(T));
   for (const auto& elem : vec) {
-    total += MemoryUsage(elem);  // calls our overloads in this namespace
+    auto curr = MemoryUsage(elem);  // calls our overloads in this namespace
+    total += curr;
   }
+  printf("MemoryUsageVector, total = %zu\n", total);
   return total;
 }
 
@@ -1933,6 +1940,7 @@ inline size_t MemoryUsage(const parquet::format::SizeStatistics& stats) {
   size_t total = sizeof(stats);
   total += MemoryUsageVector(stats.repetition_level_histogram);
   total += MemoryUsageVector(stats.definition_level_histogram);
+  printf("MemoryUsage(SizeStatistics) = %zu\n", total);
   return total;
 }
 
@@ -1943,6 +1951,7 @@ inline size_t MemoryUsage(const parquet::format::Statistics& stat) {
   total += MemoryUsage(stat.min);
   total += MemoryUsage(stat.max_value);
   total += MemoryUsage(stat.min_value);
+  printf("MemoryUsage(Statistics) = %zu\n", total);
   return total;
 }
 
@@ -1951,6 +1960,7 @@ inline size_t MemoryUsage(const parquet::format::KeyValue& kv) {
   size_t total = sizeof(kv);
   total += MemoryUsage(kv.key);
   total += MemoryUsage(kv.value);
+  printf("MemoryUsage(KeyValue) = %zu\n", total);
   return total;
 }
 
@@ -1962,12 +1972,15 @@ inline size_t MemoryUsage(const parquet::format::ColumnMetaData& cmd) {
   total += MemoryUsageVector(cmd.key_value_metadata);  // vector<KeyValue>
   total += MemoryUsageVector(cmd.encoding_stats);      // vector<PageEncodingStats>
   total += MemoryUsage(cmd.size_statistics);           // SizeStatistics
+  printf("MemoryUsage(ColumnMetaData) = %zu\n", total);
   return total;
 }
 
 // Overload for parquet::format::ColumnCryptoMetaData
 inline size_t MemoryUsage(const parquet::format::ColumnCryptoMetaData& ccmd) {
-  return sizeof(ccmd);
+  size_t total = sizeof(ccmd);
+  printf("MemoryUsage(ColumnCryptoMetaData) = %zu\n", total);
+  return total;
 }
 
 // Overload for parquet::format::ColumnChunk
@@ -1977,17 +1990,28 @@ inline size_t MemoryUsage(const parquet::format::ColumnChunk& cc) {
   total += MemoryUsage(cc.encrypted_column_metadata);
   total += MemoryUsage(cc.meta_data);
   total += MemoryUsage(cc.crypto_metadata);
+  printf("MemoryUsage(ColumnChunk) = %zu\n", total);
   return total;
 }
 
 // Overload for parquet::format::SortingColumn (assumed to be plain data)
-inline size_t MemoryUsage(const parquet::format::SortingColumn& sc) { return sizeof(sc); }
+inline size_t MemoryUsage(const parquet::format::SortingColumn& sc) {
+  size_t total = sizeof(sc);
+  printf("MemoryUsage(SortingColumn) = %zu\n", total);
+  return total;
+}
 
 // Overload for parquet::format::RowGroup: sum up its fixed size plus its dynamic vectors.
 inline size_t MemoryUsage(const parquet::format::RowGroup& rg) {
   size_t total = sizeof(rg);
   total += MemoryUsageVector(rg.columns);          // vector<ColumnChunk>
   total += MemoryUsageVector(rg.sorting_columns);  // vector<SortingColumn>
+  printf(
+      "sizeof(rg) = %zu, rg.columns.size() = %zu, rg.columns.capacity() = %zu, "
+      "rg.sorting_columns.size() = %zu, rg.sorting_columns.capacity() = %zu, "
+      "MemoryUsage(RowGroup) = %zu\n",
+      sizeof(rg), rg.columns.size(), rg.columns.capacity(), rg.sorting_columns.size(),
+      rg.sorting_columns.capacity(), total);
   return total;
 }
 
@@ -1999,6 +2023,7 @@ inline size_t MemoryUsage(const std::vector<parquet::format::RowGroup>& row_grou
   for (const auto& rg : row_groups) {
     total += MemoryUsage(rg);
   }
+  printf("MemoryUsage(vector<RowGroup>) = %zu\n", total);
   return total;
 }
 
