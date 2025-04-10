@@ -308,6 +308,33 @@ bool CheckRoundTrip(const std::vector<int>& values, int bit_width) {
   return true;
 }
 
+TEST(Rle, DecoderGetBitWidthRoundTrip) {
+  std::vector<int> values = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                             1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                             1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+  int bit_width = 17;
+  const int len = 64 * 1024;
+  uint8_t buffer[len];
+  {
+    RleEncoder encoder(buffer, len, bit_width);
+    for (size_t i = 0; i < values.size(); ++i) {
+      bool result = encoder.Put(values[i]);
+      EXPECT_TRUE(result);
+    }
+    encoder.Flush();
+  }
+  std::vector<int> decoded_values;
+  {
+    RleDecoder decoder(buffer, len, bit_width);
+    for (int read_value = 0; decoder.Get(&read_value);) {
+      decoded_values.push_back(read_value);
+    }
+  }
+  EXPECT_EQ(values, decoded_values);
+}
+
 TEST(Rle, SpecificSequences) {
   const int len = 1024;
   uint8_t expected_buffer[len];
