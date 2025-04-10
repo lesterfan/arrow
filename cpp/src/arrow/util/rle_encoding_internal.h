@@ -309,24 +309,29 @@ inline bool RleDecoder::Get(T* val) {
 
 template <typename T>
 inline bool RleDecoder::GetNextRun(T* val, int* num_repeats, int batch_size) {
-  if (repeat_count_ > 0) {
-    *val = static_cast<T>(current_value_);
-    *num_repeats = std::min(repeat_count_, batch_size);
-    repeat_count_ -= *num_repeats;
-    return true;
-  } else if (literal_count_ > 0) {
-    if (!bit_reader_.GetValue(bit_width_, val)) {
-      return false;
+  DCHECK_GE(bit_width_, 0);
+  int values_read = 0;
+
+  while (values_read == 0) {
+    int remaining = batch_size - values_read;
+
+    if (repeat_count_ > 0) {
+      *val = static_cast<T>(current_value_);
+      *num_repeats = std::min(repeat_count_, remaining);
+      values_read = *num_repeats;
+      repeat_count_ -= *num_repeats;
+    } else if (literal_count_ > 0) {
+      if (!bit_reader_.GetValue(bit_width_, val)) {
+        break;
+      }
+      *num_repeats = 1;
+      values_read = *num_repeats;
+      --literal_count_;
+    } else {
+      if (!NextCounts<T>()) break;
     }
-    *num_repeats = 1;
-    --literal_count_;
-    return true;
-  } else {
-    if (!NextCounts<T>()) {
-      return false;
-    }
-    return GetNextRun(val, num_repeats, batch_size);
   }
+  return values_read != 0;
 }
 
 template <typename T>
