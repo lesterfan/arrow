@@ -287,8 +287,8 @@ class FileReaderImpl : public FileReader {
       const std::vector<PageEncodingStats>& encoding_stats =
           column_chunk_metadata->encoding_stats();
       printf(
-          "Read column metadata, compression: %d, total_uncompressed_size: %ld, "
-          "total_compressed_size: %ld\n",
+          "Read column metadata, compression: %d, total_uncompressed_size: %lld, "
+          "total_compressed_size: %lld\n",
           compression, total_uncompressed_size, total_compressed_size);
       printf("has_dictionary: %d, encodings: \n", has_dictionary);
       for (auto encoding : encodings) {
@@ -513,7 +513,7 @@ class LeafReader : public ColumnReaderImpl {
 
   Status LoadBatch(int64_t records_to_read) final {
     BEGIN_PARQUET_CATCH_EXCEPTIONS
-    printf("Loading batch, records_to_read: %ld\n", records_to_read);
+    printf("Loading batch, records_to_read: %lld\n", records_to_read);
     out_ = nullptr;
     record_reader_->Reset();
     // Pre-allocation gives much better performance for flat columns
@@ -525,7 +525,7 @@ class LeafReader : public ColumnReaderImpl {
         break;
       }
       int64_t records_read = record_reader_->ReadRecords(records_to_read);
-      printf("records_read = %ld, records_to_read = %ld\n", records_read,
+      printf("records_read = %lld, records_to_read = %lld\n", records_read,
        records_to_read);
       records_to_read -= records_read;
       if (records_read == 0) {

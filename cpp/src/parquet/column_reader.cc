@@ -1288,7 +1288,7 @@ class TypedRecordReader : public TypedColumnReaderImpl<DType>,
   }
 
   int64_t ReadRecords(int64_t num_records) override {
-    printf("ReadRecords(%ld)\n", num_records);
+    printf("ReadRecords(%lld)\n", num_records);
     if (num_records == 0) return 0;
     // Delimit records, then read values at the end
     int64_t records_read = 0;
@@ -2115,7 +2115,7 @@ class ByteArrayReeRecordReader final : public TypedRecordReader<ByteArrayType>,
     PARQUET_THROW_NOT_OK(::arrow::MakeBuilder(
         ::arrow::default_memory_pool(),
         ::arrow::run_end_encoded(::arrow::int32(), ::arrow::binary()), &builder_));
-    printf("In ctor, builder_->length() = %ld\n", builder_->length());
+    printf("In ctor, builder_->length() = %lld\n", builder_->length());
   }
   void ReadValuesDense(int64_t values_to_read) override {
     int64_t num_decoded = this->current_decoder_->DecodeArrowNonNull(
@@ -2123,10 +2123,10 @@ class ByteArrayReeRecordReader final : public TypedRecordReader<ByteArrayType>,
         checked_cast<::arrow::RunEndEncodedBuilder*>(builder_.get()));
     CheckNumberDecoded(num_decoded, values_to_read);
     ResetValues();
-    printf("After ReadValuesDense, builder_->length() = %ld\n", builder_->length());
+    printf("After ReadValuesDense, builder_->length() = %lld\n", builder_->length());
   }
   void ReadValuesSpaced(int64_t values_to_read, int64_t null_count) override {
-    printf("ByteArrayReeRecordReader::ReadValuesSpaced(%ld, %ld)\n", values_to_read,
+    printf("ByteArrayReeRecordReader::ReadValuesSpaced(%lld, %lld)\n", values_to_read,
            null_count);
     int64_t num_decoded = this->current_decoder_->DecodeArrow(
         static_cast<int>(values_to_read), static_cast<int>(null_count),
@@ -2134,13 +2134,13 @@ class ByteArrayReeRecordReader final : public TypedRecordReader<ByteArrayType>,
         checked_cast<::arrow::RunEndEncodedBuilder*>(builder_.get()));
     CheckNumberDecoded(num_decoded, values_to_read - null_count);
     ResetValues();
-    printf("After ReadValuesSpaced, builder_->length() = %ld\n", builder_->length());
+    printf("After ReadValuesSpaced, builder_->length() = %lld\n", builder_->length());
   }
   std::shared_ptr<::arrow::Array> GetResult() override {
     std::shared_ptr<::arrow::Array> result;
-    printf("In finish, builder_->length() = %ld\n", builder_->length());
+    printf("In finish, builder_->length() = %lld\n", builder_->length());
     PARQUET_THROW_NOT_OK(builder_->Finish(&result));
-    printf("After finish, builder_->length() = %ld\n", builder_->length());
+    printf("After finish, builder_->length() = %lld\n", builder_->length());
     return result;
   }
 
