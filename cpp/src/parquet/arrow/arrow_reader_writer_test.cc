@@ -4865,6 +4865,10 @@ class TestArrowReadDictionary : public ::testing::TestWithParam<double> {
                                       ::arrow::internal::Iota(options.num_row_groups)));
 
     ASSERT_OK_AND_ASSIGN(auto actual, rb->ToTable());
+
+    printf("actual: %s\n", actual->ToString().c_str());
+    printf("expected: %s\n", expected.ToString().c_str());
+
     ::arrow::AssertTablesEqual(expected, *actual, /*same_chunk_layout=*/false);
   }
 
@@ -4996,6 +5000,19 @@ TEST_P(TestArrowReadDictionary, ReadWholeFileDense) {
   CheckReadWholeFile(*expected_dense_);
 }
 
+TEST_P(TestArrowReadDictionary, LesterWip) {
+  // properties_.set_read_ree(0, true);
+  properties_.set_read_dictionary(0, true);
+  options.num_row_groups = 1;
+  options.num_rows = 16;
+  options.num_uniques = 7;
+  SetUp();
+  WriteSimple();
+
+  properties_.set_batch_size(options.num_rows * 2);
+  CheckStreamReadWholeFile(*expected_dense_);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     ReadDictionary, TestArrowReadDictionary,
     ::testing::ValuesIn(TestArrowReadDictionary::null_probabilities()));
@@ -5072,6 +5089,8 @@ TEST(TestArrowWriteDictionaries, NestedSubfield) {
 
   ::arrow::AssertTablesEqual(*table, *actual);
 }
+
+
 
 #ifdef ARROW_CSV
 

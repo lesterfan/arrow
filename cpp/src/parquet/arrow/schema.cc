@@ -491,6 +491,11 @@ bool IsRunEndEncodedReadSupported(const ArrowType& type) {
     SchemaTreeContext* ctx) {
   ARROW_ASSIGN_OR_RAISE(std::shared_ptr<ArrowType> storage_type,
                         GetArrowType(primitive_node, ctx->properties));
+  printf(
+      "GetTypeForNode, column_index = %d, ctx->properties.read_ree(column_index) = %d, "
+      "storage_type = %s\n",
+      column_index, ctx->properties.read_ree(column_index),
+      storage_type->ToString().c_str());
   if (ctx->properties.read_dictionary(column_index) &&
       IsDictionaryReadSupported(*storage_type)) {
     return ::arrow::dictionary(::arrow::int32(), storage_type);
@@ -834,7 +839,8 @@ Status NodeToSchemaField(const Node& node, LevelInfo current_levels,
       current_levels.Increment(node);
 
       printf(
-          "Running PopulateLeaf for node.name() = %s, type = %s, node.is_optional() = %d\n",
+          "Running PopulateLeaf for node.name() = %s, type = %s, node.is_optional() = "
+          "%d\n",
           node.name().c_str(), type->name().c_str(), node.is_optional());
 
       // A normal (required/optional) primitive node
