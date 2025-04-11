@@ -1536,6 +1536,9 @@ cdef class ParquetReader(_Weakrefable):
         if read_dictionary is not None:
             self._set_read_dictionary(read_dictionary, &arrow_props)
 
+        if read_ree is not None:
+            self._set_read_ree(read_ree, &arrow_props)
+
         with nogil:
             check_status(builder.memory_pool(self.pool)
                          .properties(arrow_props)
@@ -1547,6 +1550,13 @@ cdef class ParquetReader(_Weakrefable):
             if not isinstance(column, int):
                 column = self.column_name_idx(column)
             props.set_read_dictionary(column, True)
+
+    cdef _set_read_ree(self, read_ree,
+                       ArrowReaderProperties* props):
+        for column in read_ree:
+            if not isinstance(column, int):
+                column = self.column_name_idx(column)
+            props.set_read_ree(column, True)
 
     @property
     def column_paths(self):
