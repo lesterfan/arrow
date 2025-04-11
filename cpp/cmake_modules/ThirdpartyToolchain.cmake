@@ -694,8 +694,7 @@ if(DEFINED ENV{ARROW_GTEST_URL})
   set(GTEST_SOURCE_URL "$ENV{ARROW_GTEST_URL}")
 else()
   set_urls(GTEST_SOURCE_URL
-           "https://github.com/google/googletest/archive/release-${ARROW_GTEST_BUILD_VERSION}.tar.gz"
-           "https://chromium.googlesource.com/external/github.com/google/googletest/+archive/release-${ARROW_GTEST_BUILD_VERSION}.tar.gz"
+           "https://github.com/google/googletest/releases/download/v${ARROW_GTEST_BUILD_VERSION}/googletest-${ARROW_GTEST_BUILD_VERSION}.tar.gz"
            "${THIRDPARTY_MIRROR_URL}/gtest-${ARROW_GTEST_BUILD_VERSION}.tar.gz")
 endif()
 
@@ -1667,11 +1666,10 @@ endif()
 if(ARROW_BUILD_TESTS
    OR ARROW_BUILD_BENCHMARKS
    OR ARROW_BUILD_INTEGRATION
-   OR ARROW_USE_GLOG
-   OR ARROW_WITH_GRPC)
-  set(ARROW_NEED_GFLAGS 1)
+   OR ARROW_USE_GLOG)
+  set(ARROW_NEED_GFLAGS TRUE)
 else()
-  set(ARROW_NEED_GFLAGS 0)
+  set(ARROW_NEED_GFLAGS FALSE)
 endif()
 
 macro(build_gflags)
@@ -2338,6 +2336,9 @@ function(build_gtest)
                        URL ${GTEST_SOURCE_URL}
                        URL_HASH "SHA256=${ARROW_GTEST_BUILD_SHA256_CHECKSUM}")
   prepare_fetchcontent()
+  # We can remove this once we remove set(CMAKE_POLICY_VERSION_MINIMUM
+  # 3.5) from prepare_fetchcontent().
+  unset(CMAKE_POLICY_VERSION_MINIMUM)
   if(APPLE)
     string(APPEND CMAKE_CXX_FLAGS " -Wno-unused-value" " -Wno-ignored-attributes")
   endif()
@@ -2882,6 +2883,10 @@ macro(build_utf8proc)
 
   set(UTF8PROC_CMAKE_ARGS ${EP_COMMON_CMAKE_ARGS}
                           "-DCMAKE_INSTALL_PREFIX=${UTF8PROC_PREFIX}")
+
+  # We can remove this once we remove -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+  # from EP_COMMON_CMAKE_ARGS.
+  list(REMOVE_ITEM UTF8PROC_CMAKE_ARGS -DCMAKE_POLICY_VERSION_MINIMUM=3.5)
 
   externalproject_add(utf8proc_ep
                       ${EP_COMMON_OPTIONS}
@@ -3962,9 +3967,6 @@ macro(build_grpc)
                       IMPORTED_LOCATION)
   get_target_property(GRPC_CARES_INCLUDE_DIR c-ares::cares INTERFACE_INCLUDE_DIRECTORIES)
   get_filename_component(GRPC_CARES_ROOT "${GRPC_CARES_INCLUDE_DIR}" DIRECTORY)
-  get_target_property(GRPC_GFLAGS_INCLUDE_DIR ${GFLAGS_LIBRARIES}
-                      INTERFACE_INCLUDE_DIRECTORIES)
-  get_filename_component(GRPC_GFLAGS_ROOT "${GRPC_GFLAGS_INCLUDE_DIR}" DIRECTORY)
   get_target_property(GRPC_RE2_INCLUDE_DIR re2::re2 INTERFACE_INCLUDE_DIRECTORIES)
   get_filename_component(GRPC_RE2_ROOT "${GRPC_RE2_INCLUDE_DIR}" DIRECTORY)
 
@@ -3972,7 +3974,6 @@ macro(build_grpc)
   # before (what are likely) system directories
   set(GRPC_CMAKE_PREFIX "${GRPC_CMAKE_PREFIX};${ABSL_PREFIX}")
   set(GRPC_CMAKE_PREFIX "${GRPC_CMAKE_PREFIX};${GRPC_PB_ROOT}")
-  set(GRPC_CMAKE_PREFIX "${GRPC_CMAKE_PREFIX};${GRPC_GFLAGS_ROOT}")
   set(GRPC_CMAKE_PREFIX "${GRPC_CMAKE_PREFIX};${GRPC_CARES_ROOT}")
   set(GRPC_CMAKE_PREFIX "${GRPC_CMAKE_PREFIX};${GRPC_RE2_ROOT}")
 
@@ -4022,7 +4023,6 @@ macro(build_grpc)
       -DgRPC_BUILD_GRPC_RUBY_PLUGIN=OFF
       -DgRPC_BUILD_TESTS=OFF
       -DgRPC_CARES_PROVIDER=package
-      -DgRPC_GFLAGS_PROVIDER=package
       -DgRPC_MSVC_STATIC_RUNTIME=${ARROW_USE_STATIC_CRT}
       -DgRPC_PROTOBUF_PROVIDER=package
       -DgRPC_RE2_PROVIDER=package

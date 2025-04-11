@@ -1123,7 +1123,6 @@ class BinaryTask
   def define
     define_apt_tasks
     define_yum_tasks
-    define_docs_tasks
     define_r_tasks
     define_summary_tasks
   end
@@ -1876,7 +1875,6 @@ APT::FTPArchive::Release::Description "#{apt_repository_description}";
                  upload_distribution_dir,
                  preserve: true,
                  verbose: verbose?)
-            write_uploaded_files(upload_distribution_dir)
             uploader =
               MavenRepositoryUploader.new(asf_user: asf_user,
                                           asf_password: asf_password,
@@ -2232,7 +2230,10 @@ APT::FTPArchive::Release::Description "#{apt_repository_description}";
                                                  rc: rc,
                                                  source: upload_target_dir,
                                                  staging: staging?,
-                                                 sync: true,
+                                                 # Don't remove old repodata
+                                                 # because our implementation
+                                                 # doesn't support it.
+                                                 sync: false,
                                                  sync_pattern: /\/repodata\//)
               uploader.upload
             end
@@ -2375,14 +2376,18 @@ APT::FTPArchive::Release::Description "#{apt_repository_description}";
                  upload_target_dir.to_s,
                  preserve: true,
                  verbose: verbose?)
-            write_uploaded_files(upload_target_dir)
 
             uploader = MavenRepositoryUploader.new(asf_user: asf_user,
                                                    asf_password: asf_password,
                                                    distribution: distribution,
                                                    rc: rc,
                                                    source: upload_target_dir,
-                                                   sync: true,
+                                                   # Don't remove old
+                                                   # repodata. Because
+                                                   # removing files
+                                                   # aren't supported
+                                                   # on Maven repository.
+                                                   sync: false,
                                                    sync_pattern: /\/repodata\//)
             uploader.upload
           end
@@ -2516,14 +2521,6 @@ APT::FTPArchive::Release::Description "#{apt_repository_description}";
                                 target_files_glob)
     define_generic_data_rc_tasks(label, id, rc_dir, target_files_glob)
     define_generic_data_release_tasks(label, id, release_dir)
-  end
-
-  def define_docs_tasks
-    define_generic_data_tasks("Docs",
-                              :docs,
-                              "#{rc_dir}/docs/#{full_version}",
-                              "#{release_dir}/docs/#{full_version}",
-                              "test-debian-12-docs/**/*")
   end
 
   def define_r_rc_tasks(label, id, rc_dir)
