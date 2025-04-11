@@ -1204,6 +1204,24 @@ def test_dataset_read_run_end_encoded(tempdir):
         assert c0.equals(ex_chunks[1])
         assert c1.equals(ex_chunks[0])
 
+def test_dataset_to_batches_run_end_encoded(tempdir):
+    table = pa.table({'a': ["hello"] * 8})
+    filename = tempdir / "test.parquet"
+    pq.write_table(table, filename, row_group_size=2)
+    data_paths = [filename]
+    ree_column = "a"
+    schema = pq.read_schema(filename)
+    filtered_dataset = pa.dataset.FileSystemDataset.from_paths(
+        paths=data_paths,
+        schema=schema,
+        format=pa.dataset.ParquetFileFormat(
+            read_options=pa.dataset.ParquetReadOptions(ree_columns=[ree_column])
+        ),
+        filesystem=pa.fs.LocalFileSystem(),
+    )
+    batch = next(filtered_dataset.to_batches(use_threads=True))
+    assert batch
+
 def test_read_table_schema(tempdir):
     # test that schema keyword is passed through in read_table
     table = pa.table({'a': pa.array([1, 2, 3], pa.int32())})
