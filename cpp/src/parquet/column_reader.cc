@@ -34,6 +34,7 @@
 #include "arrow/array/builder_binary.h"
 #include "arrow/array/builder_dict.h"
 #include "arrow/array/builder_primitive.h"
+#include "arrow/array/builder_run_end.h"
 #include "arrow/chunked_array.h"
 #include "arrow/type.h"
 #include "arrow/util/bit_stream_utils_internal.h"
