@@ -309,7 +309,7 @@ inline bool RleDecoder::Get(T* val) {
 
 template <typename T>
 inline bool RleDecoder::GetNextRun(T* val, int* num_repeats, int batch_size) {
-  DCHECK_GE(bit_width_, 0);
+  ARROW_DCHECK_GE(bit_width_, 0);
   int values_read = 0;
 
   while (values_read == 0) {
@@ -338,15 +338,15 @@ template <typename T>
 inline bool RleDecoder::GetNextRunSpaced(T* val, bool* is_null, int* num_repeats,
                                          int batch_size, const uint8_t* valid_bits,
                                          int64_t valid_bits_offset) {
-  DCHECK_GE(bit_width_, 0);
+  ARROW_DCHECK_GE(bit_width_, 0);
   arrow::internal::BitRunReader bit_reader(valid_bits, valid_bits_offset,
                                            /*length=*/batch_size);
   arrow::internal::BitRun valid_run = bit_reader.NextRun();
   while (ARROW_PREDICT_FALSE(valid_run.length == 0)) {
     valid_run = bit_reader.NextRun();
   }
-  DCHECK_GT(batch_size, 0);
-  DCHECK_GT(valid_run.length, 0);
+  ARROW_DCHECK_GT(batch_size, 0);
+  ARROW_DCHECK_GT(valid_run.length, 0);
   if (valid_run.set) {
     return GetNextRun(
         val, num_repeats,
