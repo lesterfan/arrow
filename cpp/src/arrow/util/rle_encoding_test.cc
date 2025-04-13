@@ -279,16 +279,16 @@ bool CheckRoundTrip(const std::vector<int>& values, int bit_width) {
     }
   }
   int encoded_len = encoder.Flush();
-  int out = 0;
 
   {
     RleDecoder decoder(buffer, encoded_len, bit_width);
-    for (size_t i = 0; i < values.size(); ++i) {
-      EXPECT_TRUE(decoder.Get(&out));
-      if (values[i] != out) {
-        return false;
-      }
+    std::vector<int> decoded_values;
+    decoded_values.reserve(values.size());
+    int out = 0;
+    while (decoder.Get(&out)) {
+      decoded_values.push_back(out);
     }
+    EXPECT_EQ(values, decoded_values);
   }
 
   // Verify batch read
