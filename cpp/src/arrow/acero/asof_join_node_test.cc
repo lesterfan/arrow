@@ -1767,5 +1767,34 @@ TEST(AsofJoinTest, DestroyNonStartedAsofJoinNode) {
       DeclarationToStatus(std::move(sink)));
 }
 
+TEST(AsofJoinTest, Dictionary) {
+  // Create left source table
+  auto l_key = DictArrayFromJSON(dictionary(int32(), int32()), R"([2, null, 1, 3, 0, 0])", R"([12, 6, null, 7])");
+  auto l_schema = schema({field("key", dictionary(int32(), int32()))});
+  auto l_table = Table::Make(l_schema, {l_key});
+  
+  // Create right source table
+  auto r_key = ArrayFromJSON(int32(), R"([3, 4, 6, 6, 10])");
+  auto r_payload = ArrayFromJSON(utf8(), R"(["a", "b", "c", null, "z"])");
+  auto r_schema = schema({field("key", int32()), field("payload", utf8())});
+  auto r_table = Table::Make(r_schema, {r_key, r_payload});
+  
+  // Create table with expected results
+  auto exp_key = ArrayFromJSON(int32(), R"([null, null, 6, 7, 12, 12])");
+  auto exp_payload = ArrayFromJSON(utf8(), R"(["a", "a", "c", "z", null, null])");
+  auto exp_schema = schema({field("key", int32()), field("payload", utf8())});
+  auto exp_table = Table::Make(exp_schema, {exp_key, exp_payload});
+
+  // Set up asof join declaration
+  Declaration left("table_source", TableSourceNodeOptions(l_table));
+  Declaration right("table_source", TableSourceNodeOptions(r_table));
+  AsofJoinNodeOptions join_options({{"key", {}}, {"key", {}}}, 5);
+  auto asofjoin = Declaration("asofjoin", {std::move(left), std::move(right)}, std::move(join_options));
+
+  ASSERT_OK_AND_ASSIGN(auto result, DeclarationToTable(asofjoin));
+
+  AssertTablesEqual(*exp_table, *result);
+}
+
 }  // namespace acero
 }  // namespace arrow
