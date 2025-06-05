@@ -90,6 +90,38 @@ inline D std_index(const T& container, const V& val) {
   return std_find(container, val) - container.begin();
 }
 
+// TODO: Maybe put these helpers somwhere else?
+static const DataType& UnderlyingDictionaryType(const DataType& type) {
+  if (type.id() == Type::DICTIONARY) {
+    return *checked_cast<const DictionaryType&>(type).value_type();
+  }
+  return type;
+}
+
+static const std::shared_ptr<DataType>& UnderlyingDictionaryType(const std::shared_ptr<DataType>& type) {
+  if (type->id() == Type::DICTIONARY) {
+    return checked_cast<DictionaryType&>(*type).value_type();
+  }
+  return type;
+}
+
+static std::shared_ptr<Schema> MakeUnderlyingSchema(const std::shared_ptr<Schema>& schema) {
+  std::vector<std::shared_ptr<Field>> underlying_fields;
+  bool has_dictionary = false;
+  for (auto& field : schema->fields()) {
+    underlying_fields.push_back(field->WithType(UnderlyingDictionaryType(field->type())));
+    if (field->type()->id() == Type::DICTIONARY)
+      has_dictionary = true;
+  }
+  std::cout << "Before: " << schema->ToString() << std::endl;
+  std::cout << "After: " << Schema(underlying_fields).ToString() << std::endl;
+  return has_dictionary ? std::make_shared<Schema>(std::move(underlying_fields)) : schema;
+}
+
+static bool CompatibleTypes(const DataType& lhs, const DataType& rhs) {
+  return UnderlyingDictionaryType(lhs) == UnderlyingDictionaryType(rhs);
+}
+
 typedef uint64_t ByType;
 typedef uint64_t OnType;
 typedef uint64_t HashType;
@@ -489,6 +521,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
       : sequencer_(util::SerialSequencingQueue::Make(this)),
         queue_(std::move(handler)),
         schema_(schema),
+        underlying_schema_(MakeUnderlyingSchema(schema)),
         time_col_index_(time_col_index),
         key_col_index_(key_col_index),
         key_type_id_(key_col_index.size()),
@@ -500,15 +533,9 @@ class InputState : public util::SerialSequencingQueue::Processor {
         tolerance_(tolerance),
         memo_(DEBUG_ADD(/*no_future=*/index == 0 || !tolerance.positive, node, index)) {
     for (size_t k = 0; k < key_col_index_.size(); k++) {
-      auto& key_type = schema_->fields()[key_col_index_[k]]->type();
-      key_type_id_[k] = key_type->id() == Type::DICTIONARY
-             ? checked_cast<DictionaryType&>(*key_type).value_type()->id()
-             : key_type->id();
+      key_type_id_[k] = UnderlyingDictionaryType(schema_->fields()[key_col_index_[k]]->type())->id();
     }
-    auto& type_type = schema_->fields()[time_col_index_]->type();
-    time_type_id_ = type_type->id() == Type::DICTIONARY
-           ? checked_cast<DictionaryType&>(*type_type).value_type()->id()
-           : type_type->id();
+    time_type_id_ = UnderlyingDictionaryType(schema_->fields()[time_col_index_]->type())->id();
   }
 
   static Result<std::unique_ptr<InputState>> Make(
@@ -714,7 +741,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
   }
 
   Status Process(ExecBatch batch) override {
-    auto rb = *batch.ToRecordBatch(schema_);
+    auto rb = *batch.ToRecordBatch(underlying_schema_);
     DEBUG_SYNC(node_, "received batch from input ", index_, ":", DEBUG_MANIP(std::endl),
                rb->ToString(), DEBUG_MANIP(std::endl));
     return Push(rb);
@@ -785,6 +812,8 @@ class InputState : public util::SerialSequencingQueue::Processor {
   BackpressureConcurrentQueue<std::shared_ptr<RecordBatch>> queue_;
   // Schema associated with the input
   std::shared_ptr<Schema> schema_;
+  // Input schema after we dictionary decode
+  std::shared_ptr<Schema> underlying_schema_;
   // Total number of batches (only int because InputFinished uses int)
   std::atomic<int> total_batches_{-1};
   // Number of batches processed so far (only int because InputFinished uses int)
@@ -1002,24 +1031,6 @@ class AsofJoinNode : public ExecNode {
     return Status::OK();
   }
 
-  static const DataType& UnderlyingDictionaryType(const DataType& type) {
-    if (type.id() == Type::DICTIONARY) {
-      return *checked_cast<const DictionaryType&>(type).value_type();
-    }
-    return type;
-  }
-
-  static const std::shared_ptr<DataType>& UnderlyingDictionaryType(const std::shared_ptr<DataType>& type) {
-    if (type->id() == Type::DICTIONARY) {
-      return checked_cast<DictionaryType&>(*type).value_type();
-    }
-    return type;
-  }
-
-  static bool CompatibleTypes(const DataType& lhs, const DataType& rhs) {
-    return UnderlyingDictionaryType(lhs) == UnderlyingDictionaryType(rhs);
-  }
-
   Result<std::shared_ptr<RecordBatch>> ProcessInner() {
     DCHECK(!state_.empty());
     auto& lhs = *state_.at(0);
@@ -1119,7 +1130,9 @@ class AsofJoinNode : public ExecNode {
         if (!out_rb) break;
         ExecBatch out_b(*out_rb);
         out_b.index = batches_produced_++;
+        std::cout << "Before dictionary encode: " << out_b.ToString() << std::endl;
         Status st = DictionaryEncodeBatch(out_b);
+        std::cout << "After dictionary encode: " << out_b.ToString() << std::endl;
         if (!st.ok())
           EndFromProcessThread(std::move(st));
         DEBUG_SYNC(this, "produce batch ", out_b.index, ":", DEBUG_MANIP(std::endl),
@@ -1476,11 +1489,7 @@ class AsofJoinNode : public ExecNode {
         MakeOutputSchema(input_schema, indices_of_on_key, indices_of_by_key));
     auto indices_of_input_dict_columns = GetIndicesOfInputDictColumns(input_schema);
     auto indices_of_output_dict_columns = GetIndicesOfOutputDictColumns(*output_schema);
-    std::vector<std::shared_ptr<Field>> underlying_fields;
-    for (auto& field : output_schema->fields()) {
-      underlying_fields.push_back(field->WithType(UnderlyingDictionaryType(field->type())));
-    }
-    auto underlying_output_schema = std::make_shared<Schema>(std::move(underlying_fields));
+    auto underlying_output_schema = MakeUnderlyingSchema(output_schema);
 
     std::vector<std::unique_ptr<KeyHasher>> key_hashers;
     for (size_t i = 0; i < n_input; i++) {
@@ -1523,7 +1532,9 @@ class AsofJoinNode : public ExecNode {
     ARROW_DCHECK(std_has(inputs_, input));
     size_t k = std_find(inputs_, input) - inputs_.begin();
 
+    std::cout << "Before dictionary decode: " << batch.ToString() << std::endl;
     ARROW_RETURN_NOT_OK(DictionaryDecodeBatch(batch, k));
+    std::cout << "After dictionary decode: " << batch.ToString() << std::endl;
 
     // Put into the sequencing queue
     ARROW_RETURN_NOT_OK(state_.at(k)->InsertBatch(std::move(batch)));

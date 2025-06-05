@@ -167,6 +167,10 @@ Result<BatchesWithSchema> MakeBatchesFromNumString(
       MakeBatchesFromNumStringImpl(simple_schema, json_strings, multiplicity));
   
   // and dictionary-encode the columns that were originally dictionaries
+  // TODO: For the real implementation, each column should share a dictionary, so
+  // we need to use the Unique compute function to find all the unique values in
+  // the column and then pass that dictionary to DictionaryEncodeOptions when we
+  // encode each batch.
   BatchesWithSchema batches;
   batches.schema = schema;
   for (ExecBatch& batch : simple_batches.batches) {
@@ -182,6 +186,7 @@ Result<BatchesWithSchema> MakeBatchesFromNumString(
       }
     }
     batches.batches.emplace_back(std::move(values), batch.length);
+    batches.batches.back().index = batch.index;
   }
   return batches;
 }
@@ -312,6 +317,9 @@ void CheckRunOutput(const BatchesWithSchema& l_batches,
 
   ASSERT_OK_AND_ASSIGN(auto exp_table,
                        TableFromExecBatches(exp_batches.schema, exp_batches.batches));
+  
+  std::cout << "Expected table: " << exp_table->ToString() << std::endl;
+  std::cout << "Result table: " << res_table->ToString() << std::endl;
 
   check_tables(*exp_table, *res_table);
 }
@@ -2433,6 +2441,9 @@ TEST(AsofJoinTest, Dictionary) {
   auto asofjoin = Declaration("asofjoin", {std::move(left), std::move(right)}, std::move(join_options));
 
   ASSERT_OK_AND_ASSIGN(auto result, DeclarationToTable(asofjoin));
+
+  std::cout << "Result table: " << result->ToString() << std::endl;
+  std::cout << "Expected table: " << exp_table->ToString() << std::endl;
 
   AssertTablesEqual(*exp_table, *result);
 }
