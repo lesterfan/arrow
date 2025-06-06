@@ -113,8 +113,8 @@ static std::shared_ptr<Schema> MakeUnderlyingSchema(const std::shared_ptr<Schema
     if (field->type()->id() == Type::DICTIONARY)
       has_dictionary = true;
   }
-  std::cout << "Before: " << schema->ToString() << std::endl;
-  std::cout << "After: " << Schema(underlying_fields).ToString() << std::endl;
+  /* std::cout << "Before: " << schema->ToString() << std::endl;
+  std::cout << "After: " << Schema(underlying_fields).ToString() << std::endl; */
   return has_dictionary ? std::make_shared<Schema>(std::move(underlying_fields)) : schema;
 }
 
@@ -463,6 +463,7 @@ class KeyHasher {
     Invalidate();
     size_t batch_length = batch->num_rows();
     hashes_.resize(batch_length);
+    // std::cout << "hashes for index " << index_ << " before : " << compute::internal::GenericToString(hashes_) << std::endl;
     for (int64_t i = 0; i < static_cast<int64_t>(batch_length); i += kMiniBatchLength) {
       int64_t length = std::min(static_cast<int64_t>(batch_length - i),
                                 static_cast<int64_t>(kMiniBatchLength));
@@ -470,10 +471,28 @@ class KeyHasher {
         auto array_data = batch->column_data(indices_[k]);
         column_arrays_[k] =
             ColumnArrayFromArrayDataAndMetadata(array_data, metadata_[k], i, length);
+        /* std::cout << "index=" << index_ << " key=" << k << " column=" << indices_[k]
+              << " : " << batch->column(indices_[k])->ToString() << std::endl; */
+        /*
+        if (batch->column(indices_[k])->type()->id() == Type::BINARY) {
+          auto binary_array =
+            std::static_pointer_cast<BinaryArray>(batch->column(indices_[k]));
+          std::cout << "binary_array: ";
+          for (int j = 0; j < binary_array->length(); ++j) {
+            if (binary_array->IsNull(j)) {
+              std::cout << "null, ";
+            } else {
+              std::cout << "\"" << binary_array->GetView(j) << "\", ";
+            }
+          }
+          std::cout << std::endl;
+        }
+        */
       }
       // write directly to the cache
       Hashing64::HashMultiColumn(column_arrays_, &ctx_, hashes_.data() + i);
     }
+    // std::cout << "hashes for index " << index_ << " : " << compute::internal::GenericToString(hashes_) << std::endl;
     DEBUG_SYNC(node_, "key hasher ", index_, " got hashes ",
                compute::internal::GenericToString(hashes_), DEBUG_MANIP(std::endl));
     batch_ = batch;  // associate cache with current batch
@@ -516,12 +535,13 @@ class InputState : public util::SerialSequencingQueue::Processor {
   InputState(size_t index, TolType tolerance, bool must_hash, bool may_rehash,
              KeyHasher* key_hasher, AsofJoinNode* node, BackpressureHandler handler,
              const std::shared_ptr<arrow::Schema>& schema,
+             const std::shared_ptr<arrow::Schema>& underlying_schema,
              const col_index_t time_col_index,
              const std::vector<col_index_t>& key_col_index)
       : sequencer_(util::SerialSequencingQueue::Make(this)),
         queue_(std::move(handler)),
         schema_(schema),
-        underlying_schema_(MakeUnderlyingSchema(schema)),
+        underlying_schema_(underlying_schema),
         time_col_index_(time_col_index),
         key_col_index_(key_col_index),
         key_type_id_(key_col_index.size()),
@@ -533,16 +553,18 @@ class InputState : public util::SerialSequencingQueue::Processor {
         tolerance_(tolerance),
         memo_(DEBUG_ADD(/*no_future=*/index == 0 || !tolerance.positive, node, index)) {
     for (size_t k = 0; k < key_col_index_.size(); k++) {
-      key_type_id_[k] = UnderlyingDictionaryType(schema_->fields()[key_col_index_[k]]->type())->id();
+      key_type_id_[k] = underlying_schema_->fields()[key_col_index_[k]]->type()->id();
     }
-    time_type_id_ = UnderlyingDictionaryType(schema_->fields()[time_col_index_]->type())->id();
+    time_type_id_ = underlying_schema_->fields()[time_col_index_]->type()->id();
   }
 
   static Result<std::unique_ptr<InputState>> Make(
       size_t index, TolType tolerance, bool must_hash, bool may_rehash,
       KeyHasher* key_hasher, ExecNode* asof_input, AsofJoinNode* asof_node,
       std::atomic<int32_t>& backpressure_counter,
-      const std::shared_ptr<arrow::Schema>& schema, const col_index_t time_col_index,
+      const std::shared_ptr<arrow::Schema>& schema,
+      const std::shared_ptr<arrow::Schema>& underlying_schema,
+      const col_index_t time_col_index,
       const std::vector<col_index_t>& key_col_index) {
     constexpr size_t low_threshold = 4, high_threshold = 8;
     std::unique_ptr<BackpressureControl> backpressure_control =
@@ -553,7 +575,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
                                                 std::move(backpressure_control)));
     return std::make_unique<InputState>(index, tolerance, must_hash, may_rehash,
                                         key_hasher, asof_node, std::move(handler), schema,
-                                        time_col_index, key_col_index);
+                                        underlying_schema, time_col_index, key_col_index);
   }
 
   col_index_t InitSrcToDstMapping(col_index_t dst_offset, bool skip_time_and_key_fields) {
@@ -899,6 +921,8 @@ class CompositeTableBuilder {
     // Each item represents a portion of the columns of the output table
     new_row.AddEntry(lhs_latest_batch, lhs_latest_row, lhs_latest_row + 1);
 
+    // std::cout << "Emplacing row for key: " << key << " lhs_latest_row=" << lhs_latest_row << std::endl;
+
     DEBUG_SYNC(node_, "Emplace: key=", key, " lhs_latest_row=", lhs_latest_row,
                " lhs_latest_time=", lhs_latest_time, DEBUG_MANIP(std::endl));
 
@@ -1130,9 +1154,9 @@ class AsofJoinNode : public ExecNode {
         if (!out_rb) break;
         ExecBatch out_b(*out_rb);
         out_b.index = batches_produced_++;
-        std::cout << "Before dictionary encode: " << out_b.ToString() << std::endl;
+        // std::cout << "Before dictionary encode: " << out_b.ToString() << std::endl;
         Status st = DictionaryEncodeBatch(out_b);
-        std::cout << "After dictionary encode: " << out_b.ToString() << std::endl;
+        // std::cout << "After dictionary encode: " << out_b.ToString() << std::endl;
         if (!st.ok())
           EndFromProcessThread(std::move(st));
         DEBUG_SYNC(this, "produce batch ", out_b.index, ":", DEBUG_MANIP(std::endl),
@@ -1189,13 +1213,14 @@ class AsofJoinNode : public ExecNode {
   Status Init() override {
     auto inputs = this->inputs();
     for (size_t i = 0; i < inputs.size(); i++) {
+      auto underlying_schema = MakeUnderlyingSchema(inputs[i]->output_schema());
       RETURN_NOT_OK(key_hashers_[i]->Init(plan()->query_context()->exec_context(),
-                                          inputs[i]->output_schema()));
+                                             underlying_schema));
       ARROW_ASSIGN_OR_RAISE(
           auto input_state,
           InputState::Make(i, tolerance_, must_hash_, may_rehash_, key_hashers_[i].get(),
                            inputs[i], this, backpressure_counter_,
-                           inputs[i]->output_schema(), indices_of_on_key_[i],
+                           inputs[i]->output_schema(), underlying_schema, indices_of_on_key_[i],
                            indices_of_by_key_[i]));
       state_.push_back(std::move(input_state));
     }
@@ -1491,17 +1516,20 @@ class AsofJoinNode : public ExecNode {
     auto indices_of_output_dict_columns = GetIndicesOfOutputDictColumns(*output_schema);
     auto underlying_output_schema = MakeUnderlyingSchema(output_schema);
 
+    /*
+    std::cout << "Underlying output schema: "
+              << underlying_output_schema->ToString() << std::endl;
+    */
+
     std::vector<std::unique_ptr<KeyHasher>> key_hashers;
     for (size_t i = 0; i < n_input; i++) {
       key_hashers.push_back(std::make_unique<KeyHasher>(i, indices_of_by_key[i]));
     }
-    // TODO: consider dictionary columns
     bool must_hash =
         n_by > 1 ||
         (n_by == 1 &&
-         !is_primitive(
-             inputs[0]->output_schema()->field(indices_of_by_key[0][0])->type()->id()));
-    // TODO: consider dictionary columns
+         !is_primitive(UnderlyingDictionaryType(
+              inputs[0]->output_schema()->field(indices_of_by_key[0][0])->type())->id()));
     bool may_rehash = n_by == 1 && !must_hash;
     return plan->EmplaceNode<AsofJoinNode>(
         plan, inputs, std::move(input_labels), std::move(indices_of_on_key),
@@ -1518,7 +1546,7 @@ class AsofJoinNode : public ExecNode {
     // InputReceived may be called after execution was finished. Pushing it to the
     // InputState is unnecessary since we're done (and anyway may cause the
     // BackPressureController to pause the input, causing a deadlock), so drop it.
-    // std::cout << "AsofJoinNode::InputReceived(" << static_cast<void*>(input) << ", " << batch.index << ")\n";
+    /* std::cout << "AsofJoinNode::InputReceived(" << static_cast<void*>(input) << ", " << batch.index << ")\n"; */
     if (::arrow::compute::kUnsequencedIndex == batch.index)
       return Status::Invalid("AsofJoin requires sequenced input");
 
@@ -1532,9 +1560,9 @@ class AsofJoinNode : public ExecNode {
     ARROW_DCHECK(std_has(inputs_, input));
     size_t k = std_find(inputs_, input) - inputs_.begin();
 
-    std::cout << "Before dictionary decode: " << batch.ToString() << std::endl;
+    /* std::cout << "Before dictionary decode: " << batch.ToString() << std::endl; */
     ARROW_RETURN_NOT_OK(DictionaryDecodeBatch(batch, k));
-    std::cout << "After dictionary decode: " << batch.ToString() << std::endl;
+    /* std::cout << "After dictionary decode (input " << k << "): " << batch.ToString() << std::endl; */
 
     // Put into the sequencing queue
     ARROW_RETURN_NOT_OK(state_.at(k)->InsertBatch(std::move(batch)));
