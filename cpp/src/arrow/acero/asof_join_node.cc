@@ -91,35 +91,33 @@ inline D std_index(const T& container, const V& val) {
 }
 
 // TODO: Maybe put these helpers somwhere else?
-static const DataType& UnderlyingDictionaryType(const DataType& type) {
+static const DataType& UnderlyingValueType(const DataType& type) {
   if (type.id() == Type::DICTIONARY) {
     return *checked_cast<const DictionaryType&>(type).value_type();
   }
   return type;
 }
 
-static const std::shared_ptr<DataType>& UnderlyingDictionaryType(const std::shared_ptr<DataType>& type) {
+static const std::shared_ptr<DataType>& UnderlyingValueType(const std::shared_ptr<DataType>& type) {
   if (type->id() == Type::DICTIONARY) {
     return checked_cast<DictionaryType&>(*type).value_type();
   }
   return type;
 }
 
+static bool CompatibleTypes(const DataType& lhs, const DataType& rhs) {
+  return UnderlyingValueType(lhs) == UnderlyingValueType(rhs);
+}
+
 static std::shared_ptr<Schema> MakeUnderlyingSchema(const std::shared_ptr<Schema>& schema) {
   std::vector<std::shared_ptr<Field>> underlying_fields;
   bool has_dictionary = false;
   for (auto& field : schema->fields()) {
-    underlying_fields.push_back(field->WithType(UnderlyingDictionaryType(field->type())));
+    underlying_fields.push_back(field->WithType(UnderlyingValueType(field->type())));
     if (field->type()->id() == Type::DICTIONARY)
       has_dictionary = true;
   }
-  /* std::cout << "Before: " << schema->ToString() << std::endl;
-  std::cout << "After: " << Schema(underlying_fields).ToString() << std::endl; */
   return has_dictionary ? std::make_shared<Schema>(std::move(underlying_fields)) : schema;
-}
-
-static bool CompatibleTypes(const DataType& lhs, const DataType& rhs) {
-  return UnderlyingDictionaryType(lhs) == UnderlyingDictionaryType(rhs);
 }
 
 typedef uint64_t ByType;
@@ -463,7 +461,6 @@ class KeyHasher {
     Invalidate();
     size_t batch_length = batch->num_rows();
     hashes_.resize(batch_length);
-    // std::cout << "hashes for index " << index_ << " before : " << compute::internal::GenericToString(hashes_) << std::endl;
     for (int64_t i = 0; i < static_cast<int64_t>(batch_length); i += kMiniBatchLength) {
       int64_t length = std::min(static_cast<int64_t>(batch_length - i),
                                 static_cast<int64_t>(kMiniBatchLength));
@@ -471,28 +468,10 @@ class KeyHasher {
         auto array_data = batch->column_data(indices_[k]);
         column_arrays_[k] =
             ColumnArrayFromArrayDataAndMetadata(array_data, metadata_[k], i, length);
-        /* std::cout << "index=" << index_ << " key=" << k << " column=" << indices_[k]
-              << " : " << batch->column(indices_[k])->ToString() << std::endl; */
-        /*
-        if (batch->column(indices_[k])->type()->id() == Type::BINARY) {
-          auto binary_array =
-            std::static_pointer_cast<BinaryArray>(batch->column(indices_[k]));
-          std::cout << "binary_array: ";
-          for (int j = 0; j < binary_array->length(); ++j) {
-            if (binary_array->IsNull(j)) {
-              std::cout << "null, ";
-            } else {
-              std::cout << "\"" << binary_array->GetView(j) << "\", ";
-            }
-          }
-          std::cout << std::endl;
-        }
-        */
       }
       // write directly to the cache
       Hashing64::HashMultiColumn(column_arrays_, &ctx_, hashes_.data() + i);
     }
-    // std::cout << "hashes for index " << index_ << " : " << compute::internal::GenericToString(hashes_) << std::endl;
     DEBUG_SYNC(node_, "key hasher ", index_, " got hashes ",
                compute::internal::GenericToString(hashes_), DEBUG_MANIP(std::endl));
     batch_ = batch;  // associate cache with current batch
@@ -921,8 +900,6 @@ class CompositeTableBuilder {
     // Each item represents a portion of the columns of the output table
     new_row.AddEntry(lhs_latest_batch, lhs_latest_row, lhs_latest_row + 1);
 
-    // std::cout << "Emplacing row for key: " << key << " lhs_latest_row=" << lhs_latest_row << std::endl;
-
     DEBUG_SYNC(node_, "Emplace: key=", key, " lhs_latest_row=", lhs_latest_row,
                " lhs_latest_time=", lhs_latest_time, DEBUG_MANIP(std::endl));
 
@@ -1154,9 +1131,7 @@ class AsofJoinNode : public ExecNode {
         if (!out_rb) break;
         ExecBatch out_b(*out_rb);
         out_b.index = batches_produced_++;
-        // std::cout << "Before dictionary encode: " << out_b.ToString() << std::endl;
         Status st = DictionaryEncodeBatch(out_b);
-        // std::cout << "After dictionary encode: " << out_b.ToString() << std::endl;
         if (!st.ok())
           EndFromProcessThread(std::move(st));
         DEBUG_SYNC(this, "produce batch ", out_b.index, ":", DEBUG_MANIP(std::endl),
@@ -1358,19 +1333,17 @@ class AsofJoinNode : public ExecNode {
       if (on_key_type == NULLPTR) {
         on_key_type = on_field->type().get();
       } else if (!CompatibleTypes(*on_key_type, *on_field->type())) {
-        // TODO: Write a better error message?
-        return Status::Invalid("Incompatible data types for on-key: expected ", *on_key_type, " but got ",
-                               *on_field->type(), " for field ", on_field->name(),
+        return Status::Invalid("Incompatible data types for on-key: expected a type compatible with ",
+                               *on_key_type, " but got ", *on_field->type(), " for field ", on_field->name(),
                                " in input ", j);
       }
       for (size_t k = 0; k < n_by; k++) {
         if (by_key_type[k] == NULLPTR) {
           by_key_type[k] = by_field[k]->type().get();
         } else if (!CompatibleTypes(*by_key_type[k], *by_field[k]->type())) {
-          // TODO: Write a better error message?
-          return Status::Invalid("Incompatible data types for by-key: expected ", *by_key_type[k], " but got ",
-                                 *by_field[k]->type(), " for field ", by_field[k]->name(),
-                                 " in input ", j);
+          return Status::Invalid("Incompatible data types for by-key: expected a type compatible with ",
+                                 *by_key_type[k], " but got ", *by_field[k]->type(), " for field ",
+                                 by_field[k]->name(), " in input ", j);
         }
       }
 
@@ -1516,11 +1489,6 @@ class AsofJoinNode : public ExecNode {
     auto indices_of_output_dict_columns = GetIndicesOfOutputDictColumns(*output_schema);
     auto underlying_output_schema = MakeUnderlyingSchema(output_schema);
 
-    /*
-    std::cout << "Underlying output schema: "
-              << underlying_output_schema->ToString() << std::endl;
-    */
-
     std::vector<std::unique_ptr<KeyHasher>> key_hashers;
     for (size_t i = 0; i < n_input; i++) {
       key_hashers.push_back(std::make_unique<KeyHasher>(i, indices_of_by_key[i]));
@@ -1528,7 +1496,7 @@ class AsofJoinNode : public ExecNode {
     bool must_hash =
         n_by > 1 ||
         (n_by == 1 &&
-         !is_primitive(UnderlyingDictionaryType(
+         !is_primitive(UnderlyingValueType(
               inputs[0]->output_schema()->field(indices_of_by_key[0][0])->type())->id()));
     bool may_rehash = n_by == 1 && !must_hash;
     return plan->EmplaceNode<AsofJoinNode>(
@@ -1546,7 +1514,6 @@ class AsofJoinNode : public ExecNode {
     // InputReceived may be called after execution was finished. Pushing it to the
     // InputState is unnecessary since we're done (and anyway may cause the
     // BackPressureController to pause the input, causing a deadlock), so drop it.
-    /* std::cout << "AsofJoinNode::InputReceived(" << static_cast<void*>(input) << ", " << batch.index << ")\n"; */
     if (::arrow::compute::kUnsequencedIndex == batch.index)
       return Status::Invalid("AsofJoin requires sequenced input");
 
@@ -1560,9 +1527,8 @@ class AsofJoinNode : public ExecNode {
     ARROW_DCHECK(std_has(inputs_, input));
     size_t k = std_find(inputs_, input) - inputs_.begin();
 
-    /* std::cout << "Before dictionary decode: " << batch.ToString() << std::endl; */
+    // Decode dictionary columns
     ARROW_RETURN_NOT_OK(DictionaryDecodeBatch(batch, k));
-    /* std::cout << "After dictionary decode (input " << k << "): " << batch.ToString() << std::endl; */
 
     // Put into the sequencing queue
     ARROW_RETURN_NOT_OK(state_.at(k)->InsertBatch(std::move(batch)));
