@@ -31,12 +31,9 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include <iostream>
-
 #include "arrow/acero/exec_plan.h"
 #include "arrow/acero/options.h"
 #include "arrow/acero/unmaterialized_table_internal.h"
-#include "arrow/type.h"
 #ifndef NDEBUG
 #  include "arrow/acero/options_internal.h"
 #endif
@@ -523,6 +520,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
         underlying_schema_(underlying_schema),
         time_col_index_(time_col_index),
         key_col_index_(key_col_index),
+        time_type_id_(underlying_schema_->fields()[time_col_index_]->type()->id()),
         key_type_id_(key_col_index.size()),
         key_hasher_(key_hasher),
         node_(node),
@@ -534,7 +532,6 @@ class InputState : public util::SerialSequencingQueue::Processor {
     for (size_t k = 0; k < key_col_index_.size(); k++) {
       key_type_id_[k] = underlying_schema_->fields()[key_col_index_[k]]->type()->id();
     }
-    time_type_id_ = underlying_schema_->fields()[time_col_index_]->type()->id();
   }
 
   static Result<std::unique_ptr<InputState>> Make(
