@@ -208,6 +208,15 @@ void BuildZeroPrimitiveArray(std::shared_ptr<Array>& empty,
   ASSERT_OK(builder->Finish(&empty));
 }
 
+void BuildZeroDictionaryArray(std::shared_ptr<arrow::Array>& empty,
+                              const std::shared_ptr<DataType>& type, int64_t length) {
+  std::shared_ptr<Array> dictionary, indices;
+  BuildZeroPrimitiveArray(dictionary, type, 1);
+  BuildZeroPrimitiveArray(indices, int32(), length);
+  auto dict_type = arrow::dictionary(int32(), type);
+  ASSERT_OK_AND_ASSIGN(empty, DictionaryArray::FromArrays(dict_type, indices, dictionary));
+}
+
 template <typename Builder>
 void BuildZeroBaseBinaryArray(std::shared_ptr<Array>& empty, int64_t length) {
   Builder builder(default_memory_pool());
@@ -216,6 +225,15 @@ void BuildZeroBaseBinaryArray(std::shared_ptr<Array>& empty, int64_t length) {
     ASSERT_OK(builder.Append("0", /*length=*/1));
   }
   ASSERT_OK(builder.Finish(&empty));
+}
+
+template <typename Builder>
+void BuildZeroDictionaryBaseBinaryArray(std::shared_ptr<Array>& empty, int64_t length) {
+  std::shared_ptr<Array> dictionary, indices;
+  BuildZeroBaseBinaryArray<Builder>(dictionary, 1);
+  BuildZeroPrimitiveArray(indices, int32(), length);
+  auto dict_type = arrow::dictionary(int32(), dictionary->type());
+  ASSERT_OK_AND_ASSIGN(empty, DictionaryArray::FromArrays(dict_type, indices, dictionary));
 }
 
 AsofJoinNodeOptions GetRepeatedOptions(size_t repeat, FieldRef on_key,
@@ -281,6 +299,35 @@ Result<BatchesWithSchema> MutateByKey(BatchesWithSchema& batches, std::string fr
               break;
           }
           new_values.push_back(empty);
+        } else if (is_dictionary(type->id())) {
+          auto& dict_type = checked_cast<const DictionaryType&>(*type);
+          if (is_primitive(dict_type.value_type()->id())) {
+            std::shared_ptr<Array> empty;
+            BuildZeroDictionaryArray(empty, dict_type.value_type(), batch.length);
+            new_values.push_back(empty);
+          } else if (is_base_binary_like(dict_type.value_type()->id())) {
+            std::shared_ptr<Array> empty;
+            switch (dict_type.value_type()->id()) {
+              case Type::STRING:
+                BuildZeroDictionaryBaseBinaryArray<StringBuilder>(empty, batch.length);
+                break;
+              case Type::LARGE_STRING:
+                BuildZeroDictionaryBaseBinaryArray<LargeStringBuilder>(empty, batch.length);
+                break;
+              case Type::BINARY:
+                BuildZeroDictionaryBaseBinaryArray<BinaryBuilder>(empty, batch.length);
+                break;
+              case Type::LARGE_BINARY:
+                BuildZeroDictionaryBaseBinaryArray<LargeBinaryBuilder>(empty, batch.length);
+                break;
+              default:
+                DCHECK(false);
+                break;
+            }
+            new_values.push_back(empty);
+          } else {
+            DCHECK(false);
+          }
         } else {
           ARROW_ASSIGN_OR_RAISE(auto sub, Subtract(value, value));
           new_values.push_back(sub);
@@ -317,9 +364,6 @@ void CheckRunOutput(const BatchesWithSchema& l_batches,
 
   ASSERT_OK_AND_ASSIGN(auto exp_table,
                        TableFromExecBatches(exp_batches.schema, exp_batches.batches));
-  
-  std::cout << "Expected table: " << exp_table->ToString() << std::endl;
-  std::cout << "Result table: " << res_table->ToString() << std::endl;
 
   check_tables(*exp_table, *res_table);
 }
@@ -2418,32 +2462,29 @@ TEST(AsofJoinTest, DestroyNonStartedAsofJoinNode) {
 
 TEST(AsofJoinTest, Dictionary) {
   // Create left source table
-  auto l_key = DictArrayFromJSON(dictionary(int32(), int32()), R"([2, null, 1, 3, 0, 0])", R"([12, 6, null, 7])");
-  auto l_schema = schema({field("key", dictionary(int32(), int32()))});
-  auto l_table = Table::Make(l_schema, {l_key});
+  auto l_on = DictArrayFromJSON(dictionary(int32(), int32()), R"([2, null, 1, 3, 0, 0])", R"([12, 6, null, 7])");
+  auto l_schema = schema({field("on", dictionary(int32(), int32()))});
+  auto l_table = Table::Make(l_schema, {l_on});
   
   // Create right source table
-  auto r_key = ArrayFromJSON(int32(), R"([3, 4, 6, 6, 10])");
+  auto r_on = ArrayFromJSON(int32(), R"([3, 4, 6, 6, 10])");
   auto r_payload = ArrayFromJSON(utf8(), R"(["a", "b", "c", null, "z"])");
-  auto r_schema = schema({field("key", int32()), field("payload", utf8())});
-  auto r_table = Table::Make(r_schema, {r_key, r_payload});
+  auto r_schema = schema({field("on", int32()), field("payload", utf8())});
+  auto r_table = Table::Make(r_schema, {r_on, r_payload});
   
   // Create table with expected results
-  auto exp_key = ArrayFromJSON(int32(), R"([null, null, 6, 7, 12, 12])");
+  auto exp_on = DictArrayFromJSON(dictionary(int32(), int32()), R"([null, null, 0, 1, 2, 2])", R"([6, 7, 12])");
   auto exp_payload = ArrayFromJSON(utf8(), R"(["a", "a", "c", "z", null, null])");
   auto exp_schema = schema({field("key", int32()), field("payload", utf8())});
-  auto exp_table = Table::Make(exp_schema, {exp_key, exp_payload});
+  auto exp_table = Table::Make(exp_schema, {exp_on, exp_payload});
 
   // Set up asof join declaration
   Declaration left("table_source", TableSourceNodeOptions(l_table));
   Declaration right("table_source", TableSourceNodeOptions(r_table));
-  AsofJoinNodeOptions join_options({{"key", {}}, {"key", {}}}, 5);
+  AsofJoinNodeOptions join_options({{"on", {}}, {"on", {}}}, 5);
   auto asofjoin = Declaration("asofjoin", {std::move(left), std::move(right)}, std::move(join_options));
 
   ASSERT_OK_AND_ASSIGN(auto result, DeclarationToTable(asofjoin));
-
-  std::cout << "Result table: " << result->ToString() << std::endl;
-  std::cout << "Expected table: " << exp_table->ToString() << std::endl;
 
   AssertTablesEqual(*exp_table, *result);
 }
