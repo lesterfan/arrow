@@ -85,7 +85,8 @@ bool is_temporal_primitive(Type::type type_id) {
   }
 }
 
-Result<BatchesWithSchema> MakeBatchesFromNumString(
+// Can't handle dictionary fields in schema
+Result<BatchesWithSchema> MakeBatchesFromNumStringImpl(
     const std::shared_ptr<Schema>& schema,
     const std::vector<std::string_view>& json_strings, int multiplicity = 1) {
   FieldVector num_fields;
@@ -135,6 +136,61 @@ Result<BatchesWithSchema> MakeBatchesFromNumString(
   return batches;
 }
 
+
+// Can handle dictionary fields in schema
+Result<BatchesWithSchema> MakeBatchesFromNumString(
+    const std::shared_ptr<Schema>& schema,
+    const std::vector<std::string_view>& json_strings, int multiplicity = 1) {
+  // Create a simple schema with the value type in the place of any dictionary types
+  bool has_dict_columns = false;
+  FieldVector simple_fields;
+  for (auto field : schema->fields()) {
+    if (field->type()->id() == Type::DICTIONARY) {
+      has_dict_columns = true;
+      auto value_type =
+          checked_cast<const DictionaryType&>(*field->type()).value_type();
+      simple_fields.push_back(field->WithType(value_type));
+    } else {
+      simple_fields.push_back(field);
+    }
+  }
+
+  // If there are no dictionary columns, we can use the simpler implementation
+  if (!has_dict_columns) {
+    return MakeBatchesFromNumStringImpl(schema, json_strings, multiplicity);
+  }
+
+  // Otherwise, we create batches using the simple schema
+  auto simple_schema =
+      std::make_shared<Schema>(simple_fields, schema->endianness(), schema->metadata());
+  ARROW_ASSIGN_OR_RAISE(auto simple_batches,
+      MakeBatchesFromNumStringImpl(simple_schema, json_strings, multiplicity));
+  
+  // and dictionary-encode the columns that were originally dictionaries
+  // TODO: For the real implementation, each column should share a dictionary, so
+  // we need to use the Unique compute function to find all the unique values in
+  // the column and then pass that dictionary to DictionaryEncodeOptions when we
+  // encode each batch.
+  BatchesWithSchema batches;
+  batches.schema = schema;
+  for (ExecBatch& batch : simple_batches.batches) {
+    std::vector<Datum> values;
+    for (int i = 0; i < schema->num_fields(); i++) {
+      if (schema->field(i)->type()->id() == Type::DICTIONARY) {
+        auto options = compute::DictionaryEncodeOptions::Defaults();
+        ARROW_ASSIGN_OR_RAISE(auto dict_column,
+          compute::CallFunction("dictionary_encode", {std::move(batch.values[i])}, &options));
+        values.push_back(std::move(dict_column));
+      } else {
+        values.push_back(std::move(batch.values[i]));
+      }
+    }
+    batches.batches.emplace_back(std::move(values), batch.length);
+    batches.batches.back().index = batch.index;
+  }
+  return batches;
+}
+
 void BuildNullArray(std::shared_ptr<Array>& empty, const std::shared_ptr<DataType>& type,
                     int64_t length) {
   ASSERT_OK_AND_ASSIGN(auto builder, MakeBuilder(type, default_memory_pool()));
@@ -152,6 +208,15 @@ void BuildZeroPrimitiveArray(std::shared_ptr<Array>& empty,
   ASSERT_OK(builder->Finish(&empty));
 }
 
+void BuildZeroDictionaryArray(std::shared_ptr<arrow::Array>& empty,
+                              const std::shared_ptr<DataType>& type, int64_t length) {
+  std::shared_ptr<Array> dictionary, indices;
+  BuildZeroPrimitiveArray(dictionary, type, 1);
+  BuildZeroPrimitiveArray(indices, int32(), length);
+  auto dict_type = arrow::dictionary(int32(), type);
+  ASSERT_OK_AND_ASSIGN(empty, DictionaryArray::FromArrays(dict_type, indices, dictionary));
+}
+
 template <typename Builder>
 void BuildZeroBaseBinaryArray(std::shared_ptr<Array>& empty, int64_t length) {
   Builder builder(default_memory_pool());
@@ -160,6 +225,15 @@ void BuildZeroBaseBinaryArray(std::shared_ptr<Array>& empty, int64_t length) {
     ASSERT_OK(builder.Append("0", /*length=*/1));
   }
   ASSERT_OK(builder.Finish(&empty));
+}
+
+template <typename Builder>
+void BuildZeroDictionaryBaseBinaryArray(std::shared_ptr<Array>& empty, int64_t length) {
+  std::shared_ptr<Array> dictionary, indices;
+  BuildZeroBaseBinaryArray<Builder>(dictionary, 1);
+  BuildZeroPrimitiveArray(indices, int32(), length);
+  auto dict_type = arrow::dictionary(int32(), dictionary->type());
+  ASSERT_OK_AND_ASSIGN(empty, DictionaryArray::FromArrays(dict_type, indices, dictionary));
 }
 
 AsofJoinNodeOptions GetRepeatedOptions(size_t repeat, FieldRef on_key,
@@ -225,6 +299,35 @@ Result<BatchesWithSchema> MutateByKey(BatchesWithSchema& batches, std::string fr
               break;
           }
           new_values.push_back(empty);
+        } else if (is_dictionary(type->id())) {
+          auto& dict_type = checked_cast<const DictionaryType&>(*type);
+          if (is_primitive(dict_type.value_type()->id())) {
+            std::shared_ptr<Array> empty;
+            BuildZeroDictionaryArray(empty, dict_type.value_type(), batch.length);
+            new_values.push_back(empty);
+          } else if (is_base_binary_like(dict_type.value_type()->id())) {
+            std::shared_ptr<Array> empty;
+            switch (dict_type.value_type()->id()) {
+              case Type::STRING:
+                BuildZeroDictionaryBaseBinaryArray<StringBuilder>(empty, batch.length);
+                break;
+              case Type::LARGE_STRING:
+                BuildZeroDictionaryBaseBinaryArray<LargeStringBuilder>(empty, batch.length);
+                break;
+              case Type::BINARY:
+                BuildZeroDictionaryBaseBinaryArray<BinaryBuilder>(empty, batch.length);
+                break;
+              case Type::LARGE_BINARY:
+                BuildZeroDictionaryBaseBinaryArray<LargeBinaryBuilder>(empty, batch.length);
+                break;
+              default:
+                DCHECK(false);
+                break;
+            }
+            new_values.push_back(empty);
+          } else {
+            DCHECK(false);
+          }
         } else {
           ARROW_ASSIGN_OR_RAISE(auto sub, Subtract(value, value));
           new_values.push_back(sub);
@@ -421,7 +524,8 @@ struct BasicTest {
             const std::vector<std::string_view>& r1_data,
             const std::vector<std::string_view>& exp_nokey_data,
             const std::vector<std::string_view>& exp_emptykey_data,
-            const std::vector<std::string_view>& exp_data, int64_t tolerance)
+            const std::vector<std::string_view>& exp_data,
+            int64_t tolerance, bool dict = false)
       : l_data(std::move(l_data)),
         r0_data(std::move(r0_data)),
         r1_data(std::move(r1_data)),
@@ -619,18 +723,24 @@ struct BasicTest {
     std::uniform_int_distribution<size_t> l_distribution(0, l_types.size() - 1);
     std::uniform_int_distribution<size_t> r0_distribution(0, r0_types.size() - 1);
     std::uniform_int_distribution<size_t> r1_distribution(0, r1_types.size() - 1);
+    std::uniform_int_distribution<int> dict_distribution(0, 3);
+
+    auto maybe_wrap_with_dict = [&dict_distribution, &engine](const auto& t) {
+      bool dict = dict_distribution(engine) == 0; // 25% of columns are dictionary-encoded
+      return dict ? dictionary(int32(), t) : t;
+    };
 
     for (int i = 0; i < 100; i++) {
       ARROW_SCOPED_TRACE("Iteration: ", i);
-      auto time_type = time_types[time_distribution(engine)];
+      auto time_type = maybe_wrap_with_dict(time_types[time_distribution(engine)]);
       ARROW_SCOPED_TRACE("Time type: ", *time_type);
-      auto key_type = key_types[key_distribution(engine)];
+      auto key_type = maybe_wrap_with_dict(key_types[key_distribution(engine)]);
       ARROW_SCOPED_TRACE("Key type: ", *key_type);
-      auto l_type = l_types[l_distribution(engine)];
+      auto l_type = maybe_wrap_with_dict(l_types[l_distribution(engine)]);
       ARROW_SCOPED_TRACE("Left type: ", *l_type);
-      auto r0_type = r0_types[r0_distribution(engine)];
+      auto r0_type = maybe_wrap_with_dict(r0_types[r0_distribution(engine)]);
       ARROW_SCOPED_TRACE("Right-0 type: ", *r0_type);
-      auto r1_type = r1_types[r1_distribution(engine)];
+      auto r1_type = maybe_wrap_with_dict(r1_types[r1_distribution(engine)]);
       ARROW_SCOPED_TRACE("Right-1 type: ", *r1_type);
 
       RunTypes({time_type, key_type, l_type, r0_type, r1_type}, batches_runner);
@@ -1765,6 +1875,34 @@ TEST(AsofJoinTest, DestroyNonStartedAsofJoinNode) {
       ::testing::HasSubstr(
           "`generator` is a required SinkNode option and cannot be null"),
       DeclarationToStatus(std::move(sink)));
+}
+
+TEST(AsofJoinTest, SimpleDictionary) {
+  auto l_on = DictArrayFromJSON(dictionary(int32(), int32()), R"([2, null, 1, 3, 0, 0])", R"([12, 6, null, 7])");
+  auto l_schema = schema({field("on", dictionary(int32(), int32()))});
+  auto l_table = Table::Make(l_schema, {l_on});
+  
+  auto r_on = ArrayFromJSON(int32(), R"([3, 4, 6, 6, 10])");
+  auto r_payload = ArrayFromJSON(utf8(), R"(["a", "b", "c", null, "z"])");
+  auto r_schema = schema({field("on", int32()), field("payload", utf8())});
+  auto r_table = Table::Make(r_schema, {r_on, r_payload});
+  
+  auto exp_on = DictArrayFromJSON(dictionary(int32(), int32()), R"([null, null, 0, 1, 2, 2])", R"([6, 7, 12])");
+  auto exp_payload = ArrayFromJSON(utf8(), R"(["a", "a", "c", "z", null, null])");
+  auto exp_schema = schema({field("key", int32()), field("payload", utf8())});
+  auto exp_table = Table::Make(exp_schema, {exp_on, exp_payload});
+
+  std::shared_ptr<Table> result;
+  {
+    Declaration left("table_source", TableSourceNodeOptions(l_table));
+    Declaration right("table_source", TableSourceNodeOptions(r_table));
+    AsofJoinNodeOptions join_options({{"on", {}}, {"on", {}}}, 5);
+    auto asofjoin = Declaration("asofjoin", {std::move(left), std::move(right)}, std::move(join_options));
+
+    ASSERT_OK_AND_ASSIGN(result, DeclarationToTable(asofjoin));
+  }
+
+  AssertTablesEqual(*exp_table, *result);
 }
 
 }  // namespace acero
