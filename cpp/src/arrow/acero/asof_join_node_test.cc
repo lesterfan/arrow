@@ -532,8 +532,7 @@ struct BasicTest {
         exp_nokey_data(std::move(exp_nokey_data)),
         exp_emptykey_data(std::move(exp_emptykey_data)),
         exp_data(std::move(exp_data)),
-        tolerance(tolerance),
-        dict(dict) {}
+        tolerance(tolerance) {}
 
   static inline void check_init(const std::vector<std::shared_ptr<DataType>>& types) {
     ASSERT_NE(0, types.size());
@@ -724,24 +723,24 @@ struct BasicTest {
     std::uniform_int_distribution<size_t> l_distribution(0, l_types.size() - 1);
     std::uniform_int_distribution<size_t> r0_distribution(0, r0_types.size() - 1);
     std::uniform_int_distribution<size_t> r1_distribution(0, r1_types.size() - 1);
+    std::uniform_int_distribution<int> dict_distribution(0, 3);
 
-    // TODO: remove dict field from BasicTest and replace this with something like
-    // maybe_wrap_with_dict that uses `std::uniform_int_distribution<bool>`
-    const auto wrap_if_dict = [dict=dict](const auto& t) {
+    auto maybe_wrap_with_dict = [&dict_distribution, &engine](const auto& t) {
+      bool dict = dict_distribution(engine) == 0; // 25% of columns are dictionary-encoded
       return dict ? dictionary(int32(), t) : t;
     };
 
     for (int i = 0; i < 100; i++) {
       ARROW_SCOPED_TRACE("Iteration: ", i);
-      auto time_type = wrap_if_dict(time_types[time_distribution(engine)]);
+      auto time_type = maybe_wrap_with_dict(time_types[time_distribution(engine)]);
       ARROW_SCOPED_TRACE("Time type: ", *time_type);
-      auto key_type = wrap_if_dict(key_types[key_distribution(engine)]);
+      auto key_type = maybe_wrap_with_dict(key_types[key_distribution(engine)]);
       ARROW_SCOPED_TRACE("Key type: ", *key_type);
-      auto l_type = wrap_if_dict(l_types[l_distribution(engine)]);
+      auto l_type = maybe_wrap_with_dict(l_types[l_distribution(engine)]);
       ARROW_SCOPED_TRACE("Left type: ", *l_type);
-      auto r0_type = wrap_if_dict(r0_types[r0_distribution(engine)]);
+      auto r0_type = maybe_wrap_with_dict(r0_types[r0_distribution(engine)]);
       ARROW_SCOPED_TRACE("Right-0 type: ", *r0_type);
-      auto r1_type = wrap_if_dict(r1_types[r1_distribution(engine)]);
+      auto r1_type = maybe_wrap_with_dict(r1_types[r1_distribution(engine)]);
       ARROW_SCOPED_TRACE("Right-1 type: ", *r1_type);
 
       RunTypes({time_type, key_type, l_type, r0_type, r1_type}, batches_runner);
@@ -803,7 +802,6 @@ struct BasicTest {
   std::vector<std::string_view> exp_emptykey_data;
   std::vector<std::string_view> exp_data;
   int64_t tolerance;
-  bool dict;
 
 #ifndef NDEBUG
   std::shared_ptr<DebugOptions> debug_opts;
@@ -859,25 +857,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestBasic1Backward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest1BackwardDict() {
-  // Single key, single batch
-  return BasicTest(
-      /*l*/ {R"([[0, 1, 1], [1000, 1, 2]])"},
-      /*r0*/ {R"([[0, 1, 11]])"},
-      /*r1*/ {R"([[1000, 1, 101]])"},
-      /*exp_nokey*/ {R"([[0, 0, 1, 11, null], [1000, 0, 2, 11, 101]])"},
-      /*exp_emptykey*/ {R"([[0, 1, 1, 11, null], [1000, 1, 2, 11, 101]])"},
-      /*exp*/ {R"([[0, 1, 1, 11, null], [1000, 1, 2, 11, 101]])"}, -1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic1BackwardDict, {
-  BasicTest basic_test = PrepareTest(GetBasicTest1BackwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetBasicTest1Forward() {
   // Single key, single batch
   return BasicTest(
@@ -891,25 +870,6 @@ BasicTest GetBasicTest1Forward() {
 
 TRACED_TEST_P(AsofJoinBasicTest, TestBasic1Forward, {
   BasicTest basic_test = PrepareTest(GetBasicTest1Forward());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest1ForwardDict() {
-  // Single key, single batch
-  return BasicTest(
-      /*l*/ {R"([[0, 1, 1], [1000, 1, 2]])"},
-      /*r0*/ {R"([[1000, 1, 11]])"},
-      /*r1*/ {R"([[2000, 1, 101]])"},
-      /*exp_nokey*/ {R"([[0, 0, 1, 11, null], [1000, 0, 2, 11, 101]])"},
-      /*exp_emptykey*/ {R"([[0, 1, 1, 11, null], [1000, 1, 2, 11, 101]])"},
-      /*exp*/ {R"([[0, 1, 1, 11, null], [1000, 1, 2, 11, 101]])"}, 1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic1ForwardDict, {
-  BasicTest basic_test = PrepareTest(GetBasicTest1ForwardDict());
   auto runner = std::get<0>(GetParam());
   runner(basic_test);
 })
@@ -931,25 +891,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestBasic2Backward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest2BackwardDict() {
-  // Single key, multiple batches
-  return BasicTest(
-      /*l*/ {R"([[0, 1, 1]])", R"([[1000, 1, 2]])"},
-      /*r0*/ {R"([[0, 1, 11]])", R"([[1000, 1, 12]])"},
-      /*r1*/ {R"([[0, 1, 101]])", R"([[1000, 1, 102]])"},
-      /*exp_nokey*/ {R"([[0, 0, 1, 11, 101], [1000, 0, 2, 12, 102]])"},
-      /*exp_emptykey*/ {R"([[0, 1, 1, 11, 101], [1000, 1, 2, 12, 102]])"},
-      /*exp*/ {R"([[0, 1, 1, 11, 101], [1000, 1, 2, 12, 102]])"}, -1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic2BackwardDict, {
-  BasicTest basic_test = PrepareTest(GetBasicTest2BackwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetBasicTest2Forward() {
   // Single key, multiple batches
   return BasicTest(
@@ -963,25 +904,6 @@ BasicTest GetBasicTest2Forward() {
 
 TRACED_TEST_P(AsofJoinBasicTest, TestBasic2Forward, {
   BasicTest basic_test = PrepareTest(GetBasicTest2Forward());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest2ForwardDict() {
-  // Single key, multiple batches
-  return BasicTest(
-      /*l*/ {R"([[0, 1, 1]])", R"([[1000, 1, 2]])"},
-      /*r0*/ {R"([[500, 1, 11]])", R"([[1000, 1, 12]])"},
-      /*r1*/ {R"([[500, 1, 101]])", R"([[1000, 1, 102]])"},
-      /*exp_nokey*/ {R"([[0, 0, 1, 11, 101], [1000, 0, 2, 12, 102]])"},
-      /*exp_emptykey*/ {R"([[0, 1, 1, 11, 101], [1000, 1, 2, 12, 102]])"},
-      /*exp*/ {R"([[0, 1, 1, 11, 101], [1000, 1, 2, 12, 102]])"}, 1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic2ForwardDict, {
-  BasicTest basic_test = PrepareTest(GetBasicTest2ForwardDict());
   auto runner = std::get<0>(GetParam());
   runner(basic_test);
 })
@@ -1004,26 +926,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestBasic3Backward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest3BackwardDict() {
-  // Single key, multiple left batches, single right batches
-  return BasicTest(
-      /*l*/ {R"([[0, 1, 1]])", R"([[1000, 1, 2]])"},
-      /*r0*/ {R"([[0, 1, 11], [1000, 1, 12]])"},
-      /*r1*/ {R"([[0, 1, 101], [1000, 1, 102]])"},
-      /*exp_nokey*/ {R"([[0, 0, 1, 11, 101], [1000, 0, 2, 12, 102]])"},
-      /*exp_emptykey*/ {R"([[0, 1, 1, 11, 101], [1000, 1, 2, 12, 102]])"},
-      /*exp*/ {R"([[0, 1, 1, 11, 101], [1000, 1, 2, 12, 102]])"}, -1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic3BackwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestBasic3_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetBasicTest3BackwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetBasicTest3Forward() {
   // Single key, multiple left batches, single right batches
   return BasicTest(
@@ -1038,26 +940,6 @@ BasicTest GetBasicTest3Forward() {
 TRACED_TEST_P(AsofJoinBasicTest, TestBasic3Forward, {
   ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestBasic3_" + std::get<1>(GetParam()));
   BasicTest basic_test = PrepareTest(GetBasicTest3Forward());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest3ForwardDict() {
-  // Single key, multiple left batches, single right batches
-  return BasicTest(
-      /*l*/ {R"([[0, 1, 1]])", R"([[1000, 1, 2]])"},
-      /*r0*/ {R"([[500, 1, 11], [1000, 1, 12]])"},
-      /*r1*/ {R"([[500, 1, 101], [1000, 1, 102]])"},
-      /*exp_nokey*/ {R"([[0, 0, 1, 11, 101], [1000, 0, 2, 12, 102]])"},
-      /*exp_emptykey*/ {R"([[0, 1, 1, 11, 101], [1000, 1, 2, 12, 102]])"},
-      /*exp*/ {R"([[0, 1, 1, 11, 101], [1000, 1, 2, 12, 102]])"}, 1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic3ForwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestBasic3_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetBasicTest3ForwardDict());
   auto runner = std::get<0>(GetParam());
   runner(basic_test);
 })
@@ -1092,38 +974,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestBasic4Backward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest4BackwardDict() {
-  // Multi key, multiple batches, misaligned batches
-  return BasicTest(
-      /*l*/
-      {R"([[0, 1, 1], [0, 2, 21], [500, 1, 2], [1000, 2, 22], [1500, 1, 3], [1500, 2, 23]])",
-       R"([[2000, 1, 4], [2000, 2, 24]])"},
-      /*r0*/
-      {R"([[0, 1, 11], [500, 2, 31], [1000, 1, 12]])",
-       R"([[1500, 2, 32], [2000, 1, 13], [2500, 2, 33]])"},
-      /*r1*/
-      {R"([[0, 2, 1001], [500, 1, 101]])",
-       R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-      /*exp_nokey*/
-      {R"([[0, 0, 1, 11, 1001], [0, 0, 21, 11, 1001], [500, 0, 2, 31, 101], [1000, 0, 22, 12, 102], [1500, 0, 3, 32, 1002], [1500, 0, 23, 32, 1002]])",
-       R"([[2000, 0, 4, 13, 103], [2000, 0, 24, 13, 103]])"},
-      /*exp_emptykey*/
-      {R"([[0, 1, 1, 11, 1001], [0, 2, 21, 11, 1001], [500, 1, 2, 31, 101], [1000, 2, 22, 12, 102], [1500, 1, 3, 32, 1002], [1500, 2, 23, 32, 1002]])",
-       R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 13, 103]])"},
-      /*exp*/
-      {R"([[0, 1, 1, 11, null], [0, 2, 21, null, 1001], [500, 1, 2, 11, 101], [1000, 2, 22, 31, 1001], [1500, 1, 3, 12, 102], [1500, 2, 23, 32, 1002]])",
-       R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 32, 1002]])"},
-      -1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic4BackwardDict, {
-  BasicTest basic_test = PrepareTest(GetBasicTest4BackwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetBasicTest4Forward() {
   // Multi key, multiple batches, misaligned batches
   return BasicTest(
@@ -1150,38 +1000,6 @@ BasicTest GetBasicTest4Forward() {
 
 TRACED_TEST_P(AsofJoinBasicTest, TestBasic4Forward, {
   BasicTest basic_test = PrepareTest(GetBasicTest4Forward());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest4ForwardDict() {
-  // Multi key, multiple batches, misaligned batches
-  return BasicTest(
-      /*l*/
-      {R"([[0, 1, 1], [0, 2, 21], [500, 1, 2], [1000, 2, 22], [1500, 1, 3], [1500, 2, 23]])",
-       R"([[2000, 1, 4], [2000, 2, 24]])"},
-      /*r0*/
-      {R"([[0, 1, 11], [500, 2, 31], [1000, 1, 12]])",
-       R"([[1600, 2, 32], [1900, 2, 33], [2100, 1, 13]])"},
-      /*r1*/
-      {R"([[0, 2, 1001], [500, 1, 101]])",
-       R"([[1100, 1, 102], [1600, 2, 1002], [2100, 1, 103]])"},
-      /*exp_nokey*/
-      {R"([[0, 0, 1, 11, 1001], [0, 0, 21, 11, 1001], [500, 0, 2, 31, 101], [1000, 0, 22, 12, 102], [1500, 0, 3, 32, 1002], [1500, 0, 23, 32, 1002]])",
-       R"([[2000, 0, 4, 13, 103], [2000, 0, 24, 13, 103]])"},
-      /*exp_emptykey*/
-      {R"([[0, 1, 1, 11, 1001], [0, 2, 21, 11, 1001], [500, 1, 2, 31, 101], [1000, 2, 22, 12, 102], [1500, 1, 3, 32, 1002], [1500, 2, 23, 32, 1002]])",
-       R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 13, 103]])"},
-      /*exp*/
-      {R"([[0, 1, 1, 11, 101], [0, 2, 21, 31, 1001], [500, 1, 2, 12, 101], [1000, 2, 22, 32, 1002], [1500, 1, 3, 13, 103], [1500, 2, 23, 32, 1002]])",
-       R"([[2000, 1, 4, 13, 103], [2000, 2, 24, null, null]])"},
-      1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic4ForwardDict, {
-  BasicTest basic_test = PrepareTest(GetBasicTest4ForwardDict());
   auto runner = std::get<0>(GetParam());
   runner(basic_test);
 })
@@ -1216,38 +1034,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestBasic5Backward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest5BackwardDict() {
-  // Multi key, multiple batches, misaligned batches, smaller tolerance
-  return BasicTest(/*l*/
-                   {R"([[0, 1, 1], [0, 2, 21], [500, 1, 2], [1000, 2, 22], [1500, 1, 3], [1500, 2, 23]])",
-                    R"([[2000, 1, 4], [2000, 2, 24]])"},
-                   /*r0*/
-                   {R"([[0, 1, 11], [500, 2, 31], [1000, 1, 12]])",
-                    R"([[1500, 2, 32], [2000, 1, 13], [2500, 2, 33]])"},
-                   /*r1*/
-                   {R"([[0, 2, 1001], [500, 1, 101]])",
-                    R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-                   /*exp_nokey*/
-                   {R"([[0, 0, 1, 11, 1001], [0, 0, 21, 11, 1001], [500, 0, 2, 31, 101], [1000, 0, 22, 12, 102], [1500, 0, 3, 32, 1002], [1500, 0, 23, 32, 1002]])",
-                    R"([[2000, 0, 4, 13, 103], [2000, 0, 24, 13, 103]])"},
-                   /*exp_emptykey*/
-                   {R"([[0, 1, 1, 11, 1001], [0, 2, 21, 11, 1001], [500, 1, 2, 31, 101], [1000, 2, 22, 12, 102], [1500, 1, 3, 32, 1002], [1500, 2, 23, 32, 1002]])",
-                    R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 13, 103]])"},
-                   /*exp*/
-                   {R"([[0, 1, 1, 11, null], [0, 2, 21, null, 1001], [500, 1, 2, 11, 101], [1000, 2, 22, 31, null], [1500, 1, 3, 12, 102], [1500, 2, 23, 32, 1002]])",
-                    R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 32, 1002]])"},
-                   -500, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic5BackwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestBasic5_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetBasicTest5BackwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetBasicTest5Forward() {
   // Multi key, multiple batches, misaligned batches, smaller tolerance
   return BasicTest(/*l*/
@@ -1274,38 +1060,6 @@ BasicTest GetBasicTest5Forward() {
 TRACED_TEST_P(AsofJoinBasicTest, TestBasic5Forward, {
   ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestBasic5_" + std::get<1>(GetParam()));
   BasicTest basic_test = PrepareTest(GetBasicTest5Forward());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest5ForwardDict() {
-  // Multi key, multiple batches, misaligned batches, smaller tolerance
-  return BasicTest(/*l*/
-                   {R"([[0, 1, 1], [0, 2, 21], [500, 1, 2], [1000, 2, 22], [1500, 1, 3], [1500, 2, 23]])",
-                    R"([[2000, 1, 4], [2000, 2, 24]])"},
-                   /*r0*/
-                   {R"([[0, 1, 11], [500, 2, 31], [1000, 1, 12]])",
-                    R"([[1500, 2, 32], [2000, 1, 13], [2500, 2, 33]])"},
-                   /*r1*/
-                   {R"([[0, 2, 1001], [500, 1, 101]])",
-                    R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-                   /*exp_nokey*/
-                   {R"([[0, 0, 1, 11, 1001], [0, 0, 21, 11, 1001], [500, 0, 2, 31, 101], [1000, 0, 22, 12, 102], [1500, 0, 3, 32, 1002], [1500, 0, 23, 32, 1002]])",
-                    R"([[2000, 0, 4, 13, 103], [2000, 0, 24, 13, 103]])"},
-                   /*exp_emptykey*/
-                   {R"([[0, 1, 1, 11, 1001], [0, 2, 21, 11, 1001], [500, 1, 2, 31, 101], [1000, 2, 22, 12, 102], [1500, 1, 3, 32, 1002], [1500, 2, 23, 32, 1002]])",
-                    R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 13, 103]])"},
-                   /*exp*/
-                   {R"([[0, 1, 1, 11, 101], [0, 2, 21, 31, 1001], [500, 1, 2, 12, 101], [1000, 2, 22, 32, 1002], [1500, 1, 3, 13, 103], [1500, 2, 23, 32, 1002]])",
-                    R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 33, null]])"},
-                   500, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic5ForwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestBasic5_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetBasicTest5ForwardDict());
   auto runner = std::get<0>(GetParam());
   runner(basic_test);
 })
@@ -1340,38 +1094,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestBasic6Backward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest6BackwardDict() {
-  // Multi key, multiple batches, misaligned batches, zero tolerance
-  return BasicTest(/*l*/
-                   {R"([[0, 1, 1], [0, 2, 21], [500, 1, 2], [1000, 2, 22], [1500, 1, 3], [1500, 2, 23]])",
-                    R"([[2000, 1, 4], [2000, 2, 24]])"},
-                   /*r0*/
-                   {R"([[0, 1, 11], [500, 2, 31], [1000, 1, 12]])",
-                    R"([[1500, 2, 32], [2000, 1, 13], [2500, 2, 33]])"},
-                   /*r1*/
-                   {R"([[0, 2, 1001], [500, 1, 101]])",
-                    R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-                   /*exp_nokey*/
-                   {R"([[0, 0, 1, 11, 1001], [0, 0, 21, 11, 1001], [500, 0, 2, 31, 101], [1000, 0, 22, 12, 102], [1500, 0, 3, 32, 1002], [1500, 0, 23, 32, 1002]])",
-                    R"([[2000, 0, 4, 13, 103], [2000, 0, 24, 13, 103]])"},
-                   /*exp_emptykey*/
-                   {R"([[0, 1, 1, 11, 1001], [0, 2, 21, 11, 1001], [500, 1, 2, 31, 101], [1000, 2, 22, 12, 102], [1500, 1, 3, 32, 1002], [1500, 2, 23, 32, 1002]])",
-                    R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 13, 103]])"},
-                   /*exp*/
-                   {R"([[0, 1, 1, 11, null], [0, 2, 21, null, 1001], [500, 1, 2, null, 101], [1000, 2, 22, null, null], [1500, 1, 3, null, null], [1500, 2, 23, 32, 1002]])",
-                    R"([[2000, 1, 4, 13, 103], [2000, 2, 24, null, null]])"},
-                   0, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic6BackwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestBasic6_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetBasicTest6BackwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetBasicTest7Forward() {
   // Right times in distant future
   return BasicTest(
@@ -1389,29 +1111,6 @@ BasicTest GetBasicTest7Forward() {
 TRACED_TEST_P(AsofJoinBasicTest, TestBasic7Forward, {
   ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestBasic7_" + std::get<1>(GetParam()));
   BasicTest basic_test = PrepareTest(GetBasicTest7Forward());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetBasicTest7ForwardDict() {
-  // Right times in distant future
-  return BasicTest(
-      /*l*/ {R"([[0, 1, 1]])", R"([[1000, 2, 2]])", R"([[2000, 1, 3]])"},
-      /*r0*/ {R"([[0, 1, 10], [1500, 1, 11], [2500, 1, 12]])"},
-      /*r1*/ {R"([[0, 1, 100], [1500, 1, 101], [2500, 1, 102]])"},
-      /*exp_nokey*/
-      {R"([[0, 0, 1, 10, 100], [1000, 0, 2, 11, 101], [2000, 0, 3, 12, 102]])"},
-      /*exp_emptykey*/
-      {R"([[0, 1, 1, 10, 100], [1000, 2, 2, 11, 101], [2000, 1, 3, 12, 102]])"},
-      /*exp*/
-      {R"([[0, 1, 1, 10, 100], [1000, 2, 2, null, null], [2000, 1, 3, 12, 102]])"}, 1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestBasic7ForwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestBasic7_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetBasicTest7ForwardDict());
   auto runner = std::get<0>(GetParam());
   runner(basic_test);
 })
@@ -1441,33 +1140,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestEmpty1Backward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetEmptyTest1BackwardDict() {
-  // Empty left batch
-  return BasicTest(/*l*/
-                   {R"([])", R"([[2000, 1, 4], [2000, 2, 24]])"},
-                   /*r0*/
-                   {R"([[0, 1, 11], [500, 2, 31], [1000, 1, 12]])",
-                    R"([[1500, 2, 32], [2000, 1, 13], [2500, 2, 33]])"},
-                   /*r1*/
-                   {R"([[0, 2, 1001], [500, 1, 101]])",
-                    R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-                   /*exp_nokey*/
-                   {R"([[2000, 0, 4, 13, 103], [2000, 0, 24, 13, 103]])"},
-                   /*exp_emptykey*/
-                   {R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 13, 103]])"},
-                   /*exp*/
-                   {R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 32, 1002]])"}, -1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestEmpty1BackwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty1Backward_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetEmptyTest1BackwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetEmptyTest1Forward() {
   // Empty left batch
   return BasicTest(/*l*/
@@ -1489,33 +1161,6 @@ BasicTest GetEmptyTest1Forward() {
 TRACED_TEST_P(AsofJoinBasicTest, TestEmpty1Forward, {
   ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty1Forward_" + std::get<1>(GetParam()));
   BasicTest basic_test = PrepareTest(GetEmptyTest1Forward());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetEmptyTest1ForwardDict() {
-  // Empty left batch
-  return BasicTest(/*l*/
-                   {R"([])", R"([[2000, 1, 4], [2000, 2, 24]])"},
-                   /*r0*/
-                   {R"([[0, 1, 11], [500, 2, 31], [1000, 1, 12]])",
-                    R"([[1500, 2, 32], [2000, 1, 13], [2500, 2, 33]])"},
-                   /*r1*/
-                   {R"([[0, 2, 1001], [500, 1, 101]])",
-                    R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-                   /*exp_nokey*/
-                   {R"([[2000, 0, 4, 13, 103], [2000, 0, 24, 13, 103]])"},
-                   /*exp_emptykey*/
-                   {R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 13, 103]])"},
-                   /*exp*/
-                   {R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 33, null]])"}, 1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestEmpty1ForwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty1Forward_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetEmptyTest1ForwardDict());
   auto runner = std::get<0>(GetParam());
   runner(basic_test);
 })
@@ -1545,33 +1190,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestEmpty2Backward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetEmptyTest2BackwardDict() {
-  // Empty left input
-  return BasicTest(/*l*/
-                   {R"([])"},
-                   /*r0*/
-                   {R"([[0, 1, 11], [500, 2, 31], [1000, 1, 12]])",
-                    R"([[1500, 2, 32], [2000, 1, 13], [2500, 2, 33]])"},
-                   /*r1*/
-                   {R"([[0, 2, 1001], [500, 1, 101]])",
-                    R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-                   /*exp_nokey*/
-                   {R"([])"},
-                   /*exp_emptykey*/
-                   {R"([])"},
-                   /*exp*/
-                   {R"([])"}, -1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestEmpty2BackwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty2Backward_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetEmptyTest2BackwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetEmptyTest2Forward() {
   // Empty left input
   return BasicTest(/*l*/
@@ -1593,33 +1211,6 @@ BasicTest GetEmptyTest2Forward() {
 TRACED_TEST_P(AsofJoinBasicTest, TestEmpty2Forward, {
   ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty2Forward_" + std::get<1>(GetParam()));
   BasicTest basic_test = PrepareTest(GetEmptyTest2Forward());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetEmptyTest2ForwardDict() {
-  // Empty left input
-  return BasicTest(/*l*/
-                   {R"([])"},
-                   /*r0*/
-                   {R"([[0, 1, 11], [500, 2, 31], [1000, 1, 12]])",
-                    R"([[1500, 2, 32], [2000, 1, 13], [2500, 2, 33]])"},
-                   /*r1*/
-                   {R"([[0, 2, 1001], [500, 1, 101]])",
-                    R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-                   /*exp_nokey*/
-                   {R"([])"},
-                   /*exp_emptykey*/
-                   {R"([])"},
-                   /*exp*/
-                   {R"([])"}, 1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestEmpty2ForwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty2Forward_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetEmptyTest2ForwardDict());
   auto runner = std::get<0>(GetParam());
   runner(basic_test);
 })
@@ -1653,37 +1244,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestEmpty3Backward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetEmptyTest3BackwardDict() {
-  // Empty right batch
-  return BasicTest(/*l*/
-                   {R"([[0, 1, 1], [0, 2, 21], [500, 1, 2], [1000, 2, 22], [1500, 1, 3], [1500, 2, 23]])",
-                    R"([[2000, 1, 4], [2000, 2, 24]])"},
-                   /*r0*/
-                   {R"([])", R"([[1500, 2, 32], [2000, 1, 13], [2500, 2, 33]])"},
-                   /*r1*/
-                   {R"([[0, 2, 1001], [500, 1, 101]])",
-                    R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-                   /*exp_nokey*/
-                   {R"([[0, 0, 1, null, 1001], [0, 0, 21, null, 1001], [500, 0, 2, null, 101], [1000, 0, 22, null, 102], [1500, 0, 3, 32, 1002], [1500, 0, 23, 32, 1002]])",
-                    R"([[2000, 0, 4, 13, 103], [2000, 0, 24, 13, 103]])"},
-                   /*exp_emptykey*/
-                   {R"([[0, 1, 1, null, 1001], [0, 2, 21, null, 1001], [500, 1, 2, null, 101], [1000, 2, 22, null, 102], [1500, 1, 3, 32, 1002], [1500, 2, 23, 32, 1002]])",
-                    R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 13, 103]])"},
-                   /*exp*/
-                   {R"([[0, 1, 1, null, null], [0, 2, 21, null, 1001], [500, 1, 2, null, 101], [1000, 2, 22, null, 1001], [1500, 1, 3, null, 102], [1500, 2, 23, 32, 1002]])",
-                    R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 32, 1002]])"},
-                   -1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestEmpty3BackwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty3Backward_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetEmptyTest3BackwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetEmptyTest3Forward() {
   // Empty right batch
   return BasicTest(/*l*/
@@ -1709,37 +1269,6 @@ BasicTest GetEmptyTest3Forward() {
 TRACED_TEST_P(AsofJoinBasicTest, TestEmpty3Forward, {
   ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty3Forward_" + std::get<1>(GetParam()));
   BasicTest basic_test = PrepareTest(GetEmptyTest3Forward());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetEmptyTest3ForwardDict() {
-  // Empty right batch
-  return BasicTest(/*l*/
-                   {R"([[0, 1, 1], [0, 2, 21], [500, 1, 2], [1000, 2, 22], [1500, 1, 3], [1500, 2, 23]])",
-                    R"([[2000, 1, 4], [2000, 2, 24]])"},
-                   /*r0*/
-                   {R"([])", R"([[1500, 2, 32], [2000, 1, 13], [2500, 2, 33]])"},
-                   /*r1*/
-                   {R"([[0, 2, 1001], [500, 1, 101]])",
-                    R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-                   /*exp_nokey*/
-                   {R"([[0, 0, 1, null, 1001], [0, 0, 21, null, 1001], [500, 0, 2, 32, 101], [1000, 0, 22, 32, 102], [1500, 0, 3, 32, 1002], [1500, 0, 23, 32, 1002]])",
-                    R"([[2000, 0, 4, 13, 103], [2000, 0, 24, 13, 103]])"},
-                   /*exp_emptykey*/
-                   {R"([[0, 1, 1, null, 1001], [0, 2, 21, null, 1001], [500, 1, 2, 32, 101], [1000, 2, 22, 32, 102], [1500, 1, 3, 32, 1002], [1500, 2, 23, 32, 1002]])",
-                    R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 13, 103]])"},
-                   /*exp*/
-                   {R"([[0, 1, 1, null, 101], [0, 2, 21, null, 1001], [500, 1, 2, null, 101], [1000, 2, 22, 32, 1002], [1500, 1, 3, 13, 103], [1500, 2, 23, 32, 1002]])",
-                    R"([[2000, 1, 4, 13, 103], [2000, 2, 24, 33, null]])"},
-                   1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestEmpty3ForwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty3Forward_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetEmptyTest3ForwardDict());
   auto runner = std::get<0>(GetParam());
   runner(basic_test);
 })
@@ -1773,37 +1302,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestEmpty4Backward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetEmptyTest4BackwardDict() {
-  // Empty right input
-  return BasicTest(/*l*/
-                   {R"([[0, 1, 1], [0, 2, 21], [500, 1, 2], [1000, 2, 22], [1500, 1, 3], [1500, 2, 23]])",
-                    R"([[2000, 1, 4], [2000, 2, 24]])"},
-                   /*r0*/
-                   {R"([])"},
-                   /*r1*/
-                   {R"([[0, 2, 1001], [500, 1, 101]])",
-                    R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-                   /*exp_nokey*/
-                   {R"([[0, 0, 1, null, 1001], [0, 0, 21, null, 1001], [500, 0, 2, null, 101], [1000, 0, 22, null, 102], [1500, 0, 3, null, 1002], [1500, 0, 23, null, 1002]])",
-                    R"([[2000, 0, 4, null, 103], [2000, 0, 24, null, 103]])"},
-                   /*exp_emptykey*/
-                   {R"([[0, 1, 1, null, 1001], [0, 2, 21, null, 1001], [500, 1, 2, null, 101], [1000, 2, 22, null, 102], [1500, 1, 3, null, 1002], [1500, 2, 23, null, 1002]])",
-                    R"([[2000, 1, 4, null, 103], [2000, 2, 24, null, 103]])"},
-                   /*exp*/
-                   {R"([[0, 1, 1, null, null], [0, 2, 21, null, 1001], [500, 1, 2, null, 101], [1000, 2, 22, null, 1001], [1500, 1, 3, null, 102], [1500, 2, 23, null, 1002]])",
-                    R"([[2000, 1, 4, null, 103], [2000, 2, 24, null, 1002]])"},
-                   -1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestEmpty4BackwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty4Backward_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetEmptyTest4BackwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetEmptyTest4Forward() {
   // Empty right input
   return BasicTest(/*l*/
@@ -1833,37 +1331,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestEmpty4Forward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetEmptyTest4ForwardDict() {
-  // Empty right input
-  return BasicTest(/*l*/
-                   {R"([[0, 1, 1], [0, 2, 21], [500, 1, 2], [1000, 2, 22], [1500, 1, 3], [1500, 2, 23]])",
-                    R"([[2000, 1, 4], [2000, 2, 24]])"},
-                   /*r0*/
-                   {R"([])"},
-                   /*r1*/
-                   {R"([[0, 2, 1001], [500, 1, 101]])",
-                    R"([[1000, 1, 102], [1500, 2, 1002], [2000, 1, 103]])"},
-                   /*exp_nokey*/
-                   {R"([[0, 0, 1, null, 1001], [0, 0, 21, null, 1001], [500, 0, 2, null, 101], [1000, 0, 22, null, 102], [1500, 0, 3, null, 1002], [1500, 0, 23, null, 1002]])",
-                    R"([[2000, 0, 4, null, 103], [2000, 0, 24, null, 103]])"},
-                   /*exp_emptykey*/
-                   {R"([[0, 1, 1, null, 1001], [0, 2, 21, null, 1001], [500, 1, 2, null, 101], [1000, 2, 22, null, 102], [1500, 1, 3, null, 1002], [1500, 2, 23, null, 1002]])",
-                    R"([[2000, 1, 4, null, 103], [2000, 2, 24, null, 103]])"},
-                   /*exp*/
-                   {R"([[0, 1, 1, null, 101], [0, 2, 21, null, 1001], [500, 1, 2, null, 101], [1000, 2, 22, null, 1002], [1500, 1, 3, null, 103], [1500, 2, 23, null, 1002]])",
-                    R"([[2000, 1, 4, null, 103], [2000, 2, 24, null, null]])"},
-                   1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestEmpty4ForwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty4Forward_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetEmptyTest4ForwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetEmptyTest5Backward() {
   // All empty
   return BasicTest(/*l*/
@@ -1887,31 +1354,6 @@ TRACED_TEST_P(AsofJoinBasicTest, TestEmpty5Backward, {
   runner(basic_test);
 })
 
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetEmptyTest5BackwardDict() {
-  // All empty
-  return BasicTest(/*l*/
-                   {R"([])"},
-                   /*r0*/
-                   {R"([])"},
-                   /*r1*/
-                   {R"([])"},
-                   /*exp_nokey*/
-                   {R"([])"},
-                   /*exp_emptykey*/
-                   {R"([])"},
-                   /*exp*/
-                   {R"([])"}, -1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestEmpty5BackwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty5Backward_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetEmptyTest5BackwardDict());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
 BasicTest GetEmptyTest5Forward() {
   // All empty
   return BasicTest(/*l*/
@@ -1931,31 +1373,6 @@ BasicTest GetEmptyTest5Forward() {
 TRACED_TEST_P(AsofJoinBasicTest, TestEmpty5Forward, {
   ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty5Forward_" + std::get<1>(GetParam()));
   BasicTest basic_test = PrepareTest(GetEmptyTest5Forward());
-  auto runner = std::get<0>(GetParam());
-  runner(basic_test);
-})
-
-// TODO: Remove this when we add dictionaries to random column type generation
-BasicTest GetEmptyTest5ForwardDict() {
-  // All empty
-  return BasicTest(/*l*/
-                   {R"([])"},
-                   /*r0*/
-                   {R"([])"},
-                   /*r1*/
-                   {R"([])"},
-                   /*exp_nokey*/
-                   {R"([])"},
-                   /*exp_emptykey*/
-                   {R"([])"},
-                   /*exp*/
-                   {R"([])"}, 1000, true);
-}
-
-// TODO: Remove this when we add dictionaries to random column type generation
-TRACED_TEST_P(AsofJoinBasicTest, TestEmpty5ForwardDict, {
-  ARROW_SCOPED_TRACE("AsofJoinBasicTest_TestEmpty5Forward_" + std::get<1>(GetParam()));
-  BasicTest basic_test = PrepareTest(GetEmptyTest5ForwardDict());
   auto runner = std::get<0>(GetParam());
   runner(basic_test);
 })
