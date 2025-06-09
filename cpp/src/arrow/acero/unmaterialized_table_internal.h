@@ -22,8 +22,12 @@
 #include "arrow/array/builder_base.h"
 #include "arrow/array/builder_binary.h"
 #include "arrow/array/builder_primitive.h"
+#include "arrow/array/array_dict.h"
+#include "arrow/array/util.h"
 #include "arrow/memory_pool.h"
 #include "arrow/record_batch.h"
+#include "arrow/result.h"
+#include "arrow/type.h"
 #include "arrow/type_traits.h"
 #include "arrow/util/logging.h"
 
@@ -86,6 +90,13 @@ class UnmaterializedCompositeTable {
     break;                                                                            \
   }
 
+#define MATERIALIZE_DICT_CASE(index_id)                                                   \
+  case arrow::Type::index_id: {                                                           \
+    using T = typename arrow::TypeIdTraits<arrow::Type::index_id>::Type;                  \
+    ARROW_ASSIGN_OR_RAISE(arrays.at(i_col), materializeDictColumn<T>(field_type, i_col)); \
+    break;                                                                                \
+  }
+
     // Build the arrays column-by-column from the rows
     for (int i_col = 0; i_col < schema->num_fields(); ++i_col) {
       const std::shared_ptr<arrow::Field>& field = schema->field(i_col);
@@ -112,6 +123,24 @@ class UnmaterializedCompositeTable {
         MATERIALIZE_CASE(LARGE_STRING)
         MATERIALIZE_CASE(BINARY)
         MATERIALIZE_CASE(LARGE_BINARY)
+        case Type::DICTIONARY: {
+          auto& dict_type = arrow::internal::checked_cast<const DictionaryType&>(*field_type);
+          switch (dict_type.index_type()->id()) {
+            MATERIALIZE_DICT_CASE(INT8)
+            MATERIALIZE_DICT_CASE(INT16)
+            MATERIALIZE_DICT_CASE(INT32)
+            MATERIALIZE_DICT_CASE(INT64)
+            MATERIALIZE_DICT_CASE(UINT8)
+            MATERIALIZE_DICT_CASE(UINT16)
+            MATERIALIZE_DICT_CASE(UINT32)
+            MATERIALIZE_DICT_CASE(UINT64)
+            default:
+              return arrow::Status::Invalid("Unsupported index type ",
+                dict_type.index_type()->ToString(), " for field ",
+                field->name());
+          }
+          break;
+        }
         default:
           return arrow::Status::Invalid("Unsupported data type ",
                                         field->type()->ToString(), " for field ",
@@ -120,6 +149,7 @@ class UnmaterializedCompositeTable {
     }
 
 #undef MATERIALIZE_CASE
+#undef MATERIALIZE_DICT_CASE
 
     std::shared_ptr<arrow::RecordBatch> r =
         arrow::RecordBatch::Make(schema, (int64_t)num_rows, arrays);
@@ -230,6 +260,43 @@ class UnmaterializedCompositeTable {
     std::shared_ptr<arrow::Array> result;
     ARROW_RETURN_NOT_OK(builder.Finish(&result));
     return Result{std::move(result)};
+  }
+
+  template <class IndexType, class Builder = typename arrow::TypeTraits<IndexType>::BuilderType>
+  arrow::Result<std::shared_ptr<arrow::Array>> materializeDictColumn(
+      const std::shared_ptr<arrow::DataType>& type, int i_col) {
+    auto& dict_type = arrow::internal::checked_cast<const DictionaryType&>(*type);
+    ARROW_ASSIGN_OR_RAISE(auto builderPtr, arrow::MakeBuilder(dict_type.index_type(), pool));
+    Builder& builder = *arrow::internal::checked_cast<Builder*>(builderPtr.get());
+    ARROW_RETURN_NOT_OK(builder.Reserve(num_rows));
+
+    const auto& [table_index, column_index] = output_col_to_src[i_col];
+
+    std::shared_ptr<Array> dictionary; // TODO: Maybe store the dictionary in the InputState or something?
+    for (const auto& unmaterialized_slice : slices) {
+      const auto& [batch, start, end] = unmaterialized_slice.components[table_index];
+      if (batch) {
+        if (!dictionary) {
+          dictionary = arrow::internal::checked_cast<DictionaryArray&>(*batch->column(column_index)).dictionary();
+        }
+        for (uint64_t rowNum = start; rowNum < end; ++rowNum) {
+          arrow::Status st = BuilderAppend<IndexType, Builder>(
+              builder, batch->column_data(column_index), rowNum);
+          ARROW_RETURN_NOT_OK(st);
+        }
+      } else {
+        for (uint64_t rowNum = start; rowNum < end; ++rowNum) {
+          ARROW_RETURN_NOT_OK(builder.AppendNull());
+        }
+      }
+    }
+    std::shared_ptr<arrow::Array> indices;
+    ARROW_RETURN_NOT_OK(builder.Finish(&indices));
+
+    if (!dictionary) {
+      ARROW_ASSIGN_OR_RAISE(dictionary, MakeEmptyArray(dict_type.value_type()));
+    }
+    return arrow::DictionaryArray::FromArrays(type, indices, dictionary);
   }
 };
 

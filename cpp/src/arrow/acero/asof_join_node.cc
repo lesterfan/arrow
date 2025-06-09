@@ -1159,8 +1159,8 @@ class AsofJoinNode : public ExecNode {
     return indices_of_by_key_;
   }
 
-  static Status is_valid_on_field(const std::shared_ptr<Field>& field) {
-    switch (field->type()->id()) {
+  static bool is_valid_on_type(const DataType& type) {
+    switch (type.id()) {
       case Type::INT8:
       case Type::INT16:
       case Type::INT32:
@@ -1174,15 +1174,14 @@ class AsofJoinNode : public ExecNode {
       case Type::TIME32:
       case Type::TIME64:
       case Type::TIMESTAMP:
-        return Status::OK();
+        return true;
       default:
-        return Status::Invalid("Unsupported type for on-key ", field->name(), " : ",
-                               field->type()->ToString());
+        return false;
     }
   }
 
-  static Status is_valid_by_field(const std::shared_ptr<Field>& field) {
-    switch (field->type()->id()) {
+  static bool is_valid_by_type(const DataType& type) {
+    switch (type.id()) {
       case Type::INT8:
       case Type::INT16:
       case Type::INT32:
@@ -1200,15 +1199,14 @@ class AsofJoinNode : public ExecNode {
       case Type::LARGE_STRING:
       case Type::BINARY:
       case Type::LARGE_BINARY:
-        return Status::OK();
+        return true;
       default:
-        return Status::Invalid("Unsupported type for by-key ", field->name(), " : ",
-                               field->type()->ToString());
+        return false;
     }
   }
 
-  static Status is_valid_data_field(const std::shared_ptr<Field>& field) {
-    switch (field->type()->id()) {
+  static bool is_valid_data_type(const DataType& type) {
+    switch (type.id()) {
       case Type::BOOL:
       case Type::INT8:
       case Type::INT16:
@@ -1229,10 +1227,11 @@ class AsofJoinNode : public ExecNode {
       case Type::LARGE_STRING:
       case Type::BINARY:
       case Type::LARGE_BINARY:
-        return Status::OK();
+        return true;
+      case Type::DICTIONARY:
+        return is_valid_data_type(*checked_cast<const DictionaryType&>(type).value_type());
       default:
-        return Status::Invalid("Unsupported type for data field ", field->name(), " : ",
-                               field->type()->ToString());
+        return false;
     }
   }
 
@@ -1286,15 +1285,24 @@ class AsofJoinNode : public ExecNode {
         const auto field = input_schema[j]->field(i);
         bool as_output;  // true if the field appears as an output
         if (i == on_field_ix) {
-          ARROW_RETURN_NOT_OK(is_valid_on_field(field));
+          if (!is_valid_on_type(*field->type())) {
+            return Status::Invalid("Unsupported type for on-key ", field->name(), " : ",
+                                   field->type()->ToString());
+          }
           // Only add on field from the left table
           as_output = (j == 0);
         } else if (std_has(by_field_ix, i)) {
-          ARROW_RETURN_NOT_OK(is_valid_by_field(field));
+          if (!is_valid_by_type(*field->type())) {
+            return Status::Invalid("Unsupported type for by-key ", field->name(), " : ",
+                                   field->type()->ToString());
+          }
           // Only add by field from the left table
           as_output = (j == 0);
         } else {
-          ARROW_RETURN_NOT_OK(is_valid_data_field(field));
+          if (!is_valid_data_type(*field->type())) {
+            return Status::Invalid("Unsupported type for data field ", field->name(), " : ",
+                                   field->type()->ToString());
+          }
           as_output = true;
         }
         if (as_output) {

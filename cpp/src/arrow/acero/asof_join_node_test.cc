@@ -1916,8 +1916,12 @@ TEST(AsofJoinTest, PayloadDictionary) {
   auto r_payload_2 = DictArrayFromJSON(dictionary(int32(), utf8()), R"([2, 0, 1])", R"(["y", "z", "x"])");
   auto r_schema = schema({field("on", int64()), field("payload_1", dictionary(int32(), int32())), field("payload_2", dictionary(int32(), utf8()))});
   auto r_table = Table::Make(r_schema, {r_on, r_payload_1, r_payload_2});
-  
-  auto exp_table = Table::Make(r_schema, {l_on, r_payload_1, r_payload_2});
+
+  auto exp_on = l_on;
+  auto exp_payload_1 = r_payload_1;
+  auto exp_payload_2 = r_payload_2;
+  auto exp_schema = r_schema;
+  auto exp_table = Table::Make(exp_schema, {exp_on, exp_payload_1, exp_payload_2});
 
   std::shared_ptr<Table> result;
   {
@@ -1931,6 +1935,67 @@ TEST(AsofJoinTest, PayloadDictionary) {
 
   AssertTablesEqual(*exp_table, *result);
 }
+
+TEST(AsofJoinTest, PayloadDictionary2) {
+  auto l_on = ArrayFromJSON(int32(), R"([1, 2, 3])");
+  auto l_schema = schema({field("on", int32())});
+  auto l_table = Table::Make(l_schema, {l_on});
+
+  auto r_on = ArrayFromJSON(int32(), R"([8, 9, 10])");
+  auto r_payload_1 = DictArrayFromJSON(dictionary(int32(), int32()), R"([0, 1, 2])", R"([12, 15, 20])");
+  auto r_payload_2 = DictArrayFromJSON(dictionary(int32(), utf8()), R"([2, 0, 1])", R"(["y", "z", "x"])");
+  auto r_schema = schema({field("on", int32()), field("payload_1", dictionary(int32(), int32())), field("payload_2", dictionary(int32(), utf8()))});
+  auto r_table = Table::Make(r_schema, {r_on, r_payload_1, r_payload_2});
+
+  auto exp_on = l_on;
+  auto exp_payload_1 = DictArrayFromJSON(dictionary(int32(), int32()), R"([null, null, null])", R"([])");
+  auto exp_payload_2 = DictArrayFromJSON(dictionary(int32(), utf8()), R"([null, null, null])", R"([])");
+  auto exp_schema = r_schema;
+  auto exp_table = Table::Make(exp_schema, {exp_on, exp_payload_1, exp_payload_2});
+
+  std::shared_ptr<Table> result;
+  {
+    Declaration left("table_source", TableSourceNodeOptions(l_table));
+    Declaration right("table_source", TableSourceNodeOptions(r_table));
+    AsofJoinNodeOptions join_options({{"on", {}}, {"on", {}}}, 0);
+    auto asofjoin = Declaration("asofjoin", {std::move(left), std::move(right)}, std::move(join_options));
+
+    ASSERT_OK_AND_ASSIGN(result, DeclarationToTable(asofjoin));
+  }
+
+  AssertTablesEqual(*exp_table, *result);
+}
+
+TEST(AsofJoinTest, PayloadDictionary3) {
+  auto l_on = ArrayFromJSON(uint16(), R"([1, 2, 3])");
+  auto l_schema = schema({field("on", uint16())});
+  auto l_table = Table::Make(l_schema, {l_on});
+
+  auto r_on = ArrayFromJSON(uint16(), R"([3, 4, 5])");
+  auto r_payload_1 = DictArrayFromJSON(dictionary(int8(), int32()), R"([0, 1, 2])", R"([12, 15, 20])");
+  auto r_payload_2 = DictArrayFromJSON(dictionary(int8(), utf8()), R"([2, 0, 1])", R"(["y", "z", "x"])");
+  auto r_schema = schema({field("on", uint16()), field("payload_1", dictionary(int8(), int32())), field("payload_2", dictionary(int8(), utf8()))});
+  auto r_table = Table::Make(r_schema, {r_on, r_payload_1, r_payload_2});
+
+  auto exp_on = l_on;
+  auto exp_payload_1 = DictArrayFromJSON(dictionary(int8(), int32()), R"([null, null, 0])", R"([12, 15, 20])");
+  auto exp_payload_2 = DictArrayFromJSON(dictionary(int8(), utf8()), R"([null, null, 2])", R"(["y", "z", "x"])");
+  auto exp_schema = r_schema;
+  auto exp_table = Table::Make(exp_schema, {exp_on, exp_payload_1, exp_payload_2});
+
+  std::shared_ptr<Table> result;
+  {
+    Declaration left("table_source", TableSourceNodeOptions(l_table));
+    Declaration right("table_source", TableSourceNodeOptions(r_table));
+    AsofJoinNodeOptions join_options({{"on", {}}, {"on", {}}}, 0);
+    auto asofjoin = Declaration("asofjoin", {std::move(left), std::move(right)}, std::move(join_options));
+
+    ASSERT_OK_AND_ASSIGN(result, DeclarationToTable(asofjoin));
+  }
+
+  AssertTablesEqual(*exp_table, *result);
+}
+
 
 }  // namespace acero
 }  // namespace arrow
