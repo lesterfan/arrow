@@ -87,36 +87,6 @@ inline D std_index(const T& container, const V& val) {
   return std_find(container, val) - container.begin();
 }
 
-// TODO: Maybe put these helpers somwhere else?
-static const DataType& UnderlyingValueType(const DataType& type) {
-  if (type.id() == Type::DICTIONARY) {
-    return *checked_cast<const DictionaryType&>(type).value_type();
-  }
-  return type;
-}
-
-static const std::shared_ptr<DataType>& UnderlyingValueType(const std::shared_ptr<DataType>& type) {
-  if (type->id() == Type::DICTIONARY) {
-    return checked_cast<DictionaryType&>(*type).value_type();
-  }
-  return type;
-}
-
-static bool CompatibleTypes(const DataType& lhs, const DataType& rhs) {
-  return UnderlyingValueType(lhs) == UnderlyingValueType(rhs);
-}
-
-static std::shared_ptr<Schema> MakeUnderlyingSchema(const std::shared_ptr<Schema>& schema) {
-  std::vector<std::shared_ptr<Field>> underlying_fields;
-  bool has_dictionary = false;
-  for (auto& field : schema->fields()) {
-    underlying_fields.push_back(field->WithType(UnderlyingValueType(field->type())));
-    if (field->type()->id() == Type::DICTIONARY)
-      has_dictionary = true;
-  }
-  return has_dictionary ? std::make_shared<Schema>(std::move(underlying_fields)) : schema;
-}
-
 typedef uint64_t ByType;
 typedef uint64_t OnType;
 typedef uint64_t HashType;
@@ -511,16 +481,14 @@ class InputState : public util::SerialSequencingQueue::Processor {
   InputState(size_t index, TolType tolerance, bool must_hash, bool may_rehash,
              KeyHasher* key_hasher, AsofJoinNode* node, BackpressureHandler handler,
              const std::shared_ptr<arrow::Schema>& schema,
-             const std::shared_ptr<arrow::Schema>& underlying_schema,
              const col_index_t time_col_index,
              const std::vector<col_index_t>& key_col_index)
       : sequencer_(util::SerialSequencingQueue::Make(this)),
         queue_(std::move(handler)),
         schema_(schema),
-        underlying_schema_(underlying_schema),
         time_col_index_(time_col_index),
         key_col_index_(key_col_index),
-        time_type_id_(underlying_schema_->fields()[time_col_index_]->type()->id()),
+        time_type_id_(schema_->fields()[time_col_index_]->type()->id()),
         key_type_id_(key_col_index.size()),
         key_hasher_(key_hasher),
         node_(node),
@@ -530,7 +498,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
         tolerance_(tolerance),
         memo_(DEBUG_ADD(/*no_future=*/index == 0 || !tolerance.positive, node, index)) {
     for (size_t k = 0; k < key_col_index_.size(); k++) {
-      key_type_id_[k] = underlying_schema_->fields()[key_col_index_[k]]->type()->id();
+      key_type_id_[k] = schema_->fields()[key_col_index_[k]]->type()->id();
     }
   }
 
@@ -538,9 +506,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
       size_t index, TolType tolerance, bool must_hash, bool may_rehash,
       KeyHasher* key_hasher, ExecNode* asof_input, AsofJoinNode* asof_node,
       std::atomic<int32_t>& backpressure_counter,
-      const std::shared_ptr<arrow::Schema>& schema,
-      const std::shared_ptr<arrow::Schema>& underlying_schema,
-      const col_index_t time_col_index,
+      const std::shared_ptr<arrow::Schema>& schema, const col_index_t time_col_index,
       const std::vector<col_index_t>& key_col_index) {
     constexpr size_t low_threshold = 4, high_threshold = 8;
     std::unique_ptr<BackpressureControl> backpressure_control =
@@ -551,7 +517,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
                                                 std::move(backpressure_control)));
     return std::make_unique<InputState>(index, tolerance, must_hash, may_rehash,
                                         key_hasher, asof_node, std::move(handler), schema,
-                                        underlying_schema, time_col_index, key_col_index);
+                                        time_col_index, key_col_index);
   }
 
   col_index_t InitSrcToDstMapping(col_index_t dst_offset, bool skip_time_and_key_fields) {
@@ -739,7 +705,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
   }
 
   Status Process(ExecBatch batch) override {
-    auto rb = *batch.ToRecordBatch(underlying_schema_);
+    auto rb = *batch.ToRecordBatch(schema_);
     DEBUG_SYNC(node_, "received batch from input ", index_, ":", DEBUG_MANIP(std::endl),
                rb->ToString(), DEBUG_MANIP(std::endl));
     return Push(rb);
@@ -810,8 +776,6 @@ class InputState : public util::SerialSequencingQueue::Processor {
   BackpressureConcurrentQueue<std::shared_ptr<RecordBatch>> queue_;
   // Schema associated with the input
   std::shared_ptr<Schema> schema_;
-  // Input schema after we dictionary decode
-  std::shared_ptr<Schema> underlying_schema_;
   // Total number of batches (only int because InputFinished uses int)
   std::atomic<int> total_batches_{-1};
   // Number of batches processed so far (only int because InputFinished uses int)
@@ -1012,29 +976,12 @@ class AsofJoinNode : public ExecNode {
     return update_state;
   }
 
-  Status DictionaryDecodeBatch(ExecBatch& batch, size_t input) {
-    for (col_index_t i : indices_of_input_dict_columns_[input]) {
-      ARROW_ASSIGN_OR_RAISE(batch.values[i],
-        compute::CallFunction("dictionary_decode", {std::move(batch.values[i])}));
-    }
-    return Status::OK();
-  }
-
-  Status DictionaryEncodeBatch(ExecBatch& batch) {
-    auto options = compute::DictionaryEncodeOptions::Defaults();
-    for (col_index_t i : indices_of_output_dict_columns_) {
-      ARROW_ASSIGN_OR_RAISE(batch.values[i],
-        compute::CallFunction("dictionary_encode", {std::move(batch.values[i])}, &options));
-    }
-    return Status::OK();
-  }
-
   Result<std::shared_ptr<RecordBatch>> ProcessInner() {
     DCHECK(!state_.empty());
     auto& lhs = *state_.at(0);
 
     // Construct new target table if needed
-    CompositeTableBuilder<MAX_JOIN_TABLES> dst(state_, underlying_output_schema_,
+    CompositeTableBuilder<MAX_JOIN_TABLES> dst(state_, output_schema_,
                                                plan()->query_context()->memory_pool(),
                                                DEBUG_ADD(state_.size(), this));
 
@@ -1128,14 +1075,12 @@ class AsofJoinNode : public ExecNode {
         if (!out_rb) break;
         ExecBatch out_b(*out_rb);
         out_b.index = batches_produced_++;
-        Status st = DictionaryEncodeBatch(out_b);
-        if (!st.ok())
-          EndFromProcessThread(std::move(st));
         DEBUG_SYNC(this, "produce batch ", out_b.index, ":", DEBUG_MANIP(std::endl),
                    out_rb->ToString(), DEBUG_MANIP(std::endl));
-        st = output_->InputReceived(this, std::move(out_b));
-        if (!st.ok())
+        Status st = output_->InputReceived(this, std::move(out_b));
+        if (!st.ok()) {
           EndFromProcessThread(std::move(st));
+        }
       } else {
         EndFromProcessThread(result.status());
         return false;
@@ -1176,23 +1121,19 @@ class AsofJoinNode : public ExecNode {
                const std::vector<col_index_t>& indices_of_on_key,
                const std::vector<std::vector<col_index_t>>& indices_of_by_key,
                AsofJoinNodeOptions join_options, std::shared_ptr<Schema> output_schema,
-               std::vector<std::unique_ptr<KeyHasher>> key_hashers,
-               std::vector<std::vector<col_index_t>> indices_of_input_dict_columns,
-               std::vector<col_index_t> indices_of_output_dict_columns,
-               std::shared_ptr<Schema> underlying_output_schema,
-               bool must_hash, bool may_rehash);
+               std::vector<std::unique_ptr<KeyHasher>> key_hashers, bool must_hash,
+               bool may_rehash);
 
   Status Init() override {
     auto inputs = this->inputs();
     for (size_t i = 0; i < inputs.size(); i++) {
-      auto underlying_schema = MakeUnderlyingSchema(inputs[i]->output_schema());
       RETURN_NOT_OK(key_hashers_[i]->Init(plan()->query_context()->exec_context(),
-                                             underlying_schema));
+                                          inputs[i]->output_schema()));
       ARROW_ASSIGN_OR_RAISE(
           auto input_state,
           InputState::Make(i, tolerance_, must_hash_, may_rehash_, key_hashers_[i].get(),
                            inputs[i], this, backpressure_counter_,
-                           inputs[i]->output_schema(), underlying_schema, indices_of_on_key_[i],
+                           inputs[i]->output_schema(), indices_of_on_key_[i],
                            indices_of_by_key_[i]));
       state_.push_back(std::move(input_state));
     }
@@ -1218,8 +1159,8 @@ class AsofJoinNode : public ExecNode {
     return indices_of_by_key_;
   }
 
-  static bool is_valid_on_type(const DataType& type) {
-    switch (type.id()) {
+  static Status is_valid_on_field(const std::shared_ptr<Field>& field) {
+    switch (field->type()->id()) {
       case Type::INT8:
       case Type::INT16:
       case Type::INT32:
@@ -1233,16 +1174,15 @@ class AsofJoinNode : public ExecNode {
       case Type::TIME32:
       case Type::TIME64:
       case Type::TIMESTAMP:
-        return true;
-      case Type::DICTIONARY:
-        return is_valid_on_type(*checked_cast<const DictionaryType&>(type).value_type());
+        return Status::OK();
       default:
-        return false;
+        return Status::Invalid("Unsupported type for on-key ", field->name(), " : ",
+                               field->type()->ToString());
     }
   }
 
-  static bool is_valid_by_type(const DataType& type) {
-    switch (type.id()) {
+  static Status is_valid_by_field(const std::shared_ptr<Field>& field) {
+    switch (field->type()->id()) {
       case Type::INT8:
       case Type::INT16:
       case Type::INT32:
@@ -1260,16 +1200,15 @@ class AsofJoinNode : public ExecNode {
       case Type::LARGE_STRING:
       case Type::BINARY:
       case Type::LARGE_BINARY:
-        return true;
-      case Type::DICTIONARY:
-        return is_valid_by_type(*checked_cast<const DictionaryType&>(type).value_type());
+        return Status::OK();
       default:
-        return false;
+        return Status::Invalid("Unsupported type for by-key ", field->name(), " : ",
+                               field->type()->ToString());
     }
   }
 
-  static bool is_valid_data_type(const DataType& type) {
-    switch (type.id()) {
+  static Status is_valid_data_field(const std::shared_ptr<Field>& field) {
+    switch (field->type()->id()) {
       case Type::BOOL:
       case Type::INT8:
       case Type::INT16:
@@ -1290,11 +1229,10 @@ class AsofJoinNode : public ExecNode {
       case Type::LARGE_STRING:
       case Type::BINARY:
       case Type::LARGE_BINARY:
-        return true;
-      case Type::DICTIONARY:
-        return is_valid_data_type(*checked_cast<const DictionaryType&>(type).value_type());
+        return Status::OK();
       default:
-        return false;
+        return Status::Invalid("Unsupported type for data field ", field->name(), " : ",
+                               field->type()->ToString());
     }
   }
 
@@ -1329,18 +1267,18 @@ class AsofJoinNode : public ExecNode {
 
       if (on_key_type == NULLPTR) {
         on_key_type = on_field->type().get();
-      } else if (!CompatibleTypes(*on_key_type, *on_field->type())) {
-        return Status::Invalid("Incompatible data types for on-key: expected a type compatible with ",
-                               *on_key_type, " but got ", *on_field->type(), " for field ", on_field->name(),
+      } else if (*on_key_type != *on_field->type()) {
+        return Status::Invalid("Expected on-key type ", *on_key_type, " but got ",
+                               *on_field->type(), " for field ", on_field->name(),
                                " in input ", j);
       }
       for (size_t k = 0; k < n_by; k++) {
         if (by_key_type[k] == NULLPTR) {
           by_key_type[k] = by_field[k]->type().get();
-        } else if (!CompatibleTypes(*by_key_type[k], *by_field[k]->type())) {
-          return Status::Invalid("Incompatible data types for by-key: expected a type compatible with ",
-                                 *by_key_type[k], " but got ", *by_field[k]->type(), " for field ",
-                                 by_field[k]->name(), " in input ", j);
+        } else if (*by_key_type[k] != *by_field[k]->type()) {
+          return Status::Invalid("Expected by-key type ", *by_key_type[k], " but got ",
+                                 *by_field[k]->type(), " for field ", by_field[k]->name(),
+                                 " in input ", j);
         }
       }
 
@@ -1348,24 +1286,15 @@ class AsofJoinNode : public ExecNode {
         const auto field = input_schema[j]->field(i);
         bool as_output;  // true if the field appears as an output
         if (i == on_field_ix) {
-          if (!is_valid_on_type(*field->type())) {
-            return Status::Invalid("Unsupported type for on-key ", field->name(), " : ",
-                                   field->type()->ToString());
-          }
+          ARROW_RETURN_NOT_OK(is_valid_on_field(field));
           // Only add on field from the left table
           as_output = (j == 0);
         } else if (std_has(by_field_ix, i)) {
-          if (!is_valid_by_type(*field->type())) {
-            return Status::Invalid("Unsupported type for by-key ", field->name(), " : ",
-                                   field->type()->ToString());
-          }
+          ARROW_RETURN_NOT_OK(is_valid_by_field(field));
           // Only add by field from the left table
           as_output = (j == 0);
         } else {
-          if (!is_valid_data_type(*field->type())) {
-            return Status::Invalid("Unsupported type for data field ", field->name(), " : ",
-                                   field->type()->ToString());
-          }
+          ARROW_RETURN_NOT_OK(is_valid_data_field(field));
           as_output = true;
         }
         if (as_output) {
@@ -1441,28 +1370,6 @@ class AsofJoinNode : public ExecNode {
     return indices_of_by_key;
   }
 
-  static std::vector<std::vector<col_index_t>> GetIndicesOfInputDictColumns(
-      const std::vector<std::shared_ptr<Schema>>& input_schema) {
-    std::vector<std::vector<col_index_t>> indices_of_dict_columns(input_schema.size());
-    for (size_t i = 0; i < input_schema.size(); i++) {
-      const auto& schema = input_schema[i];
-      for (col_index_t j = 0; j < schema->num_fields(); j++) {
-        if (schema->field(j)->type()->id() == Type::DICTIONARY)
-          indices_of_dict_columns[i].push_back(j);
-      }
-    }
-    return indices_of_dict_columns;
-  }
-
-  static std::vector<col_index_t> GetIndicesOfOutputDictColumns(const Schema& schema) {
-    std::vector<col_index_t> indices;
-    for (col_index_t j = 0; j < schema.num_fields(); j++) {
-      if (schema.field(j)->type()->id() == Type::DICTIONARY)
-        indices.push_back(j);
-    }
-    return indices;
-  }
-
   static arrow::Result<ExecNode*> Make(ExecPlan* plan, std::vector<ExecNode*> inputs,
                                        const ExecNodeOptions& options) {
     DCHECK_GE(inputs.size(), 2) << "Must have at least two inputs";
@@ -1482,9 +1389,6 @@ class AsofJoinNode : public ExecNode {
     ARROW_ASSIGN_OR_RAISE(
         std::shared_ptr<Schema> output_schema,
         MakeOutputSchema(input_schema, indices_of_on_key, indices_of_by_key));
-    auto indices_of_input_dict_columns = GetIndicesOfInputDictColumns(input_schema);
-    auto indices_of_output_dict_columns = GetIndicesOfOutputDictColumns(*output_schema);
-    auto underlying_output_schema = MakeUnderlyingSchema(output_schema);
 
     std::vector<std::unique_ptr<KeyHasher>> key_hashers;
     for (size_t i = 0; i < n_input; i++) {
@@ -1493,15 +1397,13 @@ class AsofJoinNode : public ExecNode {
     bool must_hash =
         n_by > 1 ||
         (n_by == 1 &&
-         !is_primitive(UnderlyingValueType(
-              inputs[0]->output_schema()->field(indices_of_by_key[0][0])->type())->id()));
+         !is_primitive(
+             inputs[0]->output_schema()->field(indices_of_by_key[0][0])->type()->id()));
     bool may_rehash = n_by == 1 && !must_hash;
     return plan->EmplaceNode<AsofJoinNode>(
         plan, inputs, std::move(input_labels), std::move(indices_of_on_key),
         std::move(indices_of_by_key), std::move(join_options), std::move(output_schema),
-        std::move(key_hashers), std::move(indices_of_input_dict_columns),
-        std::move(indices_of_output_dict_columns), std::move(underlying_output_schema),
-        must_hash, may_rehash);
+        std::move(key_hashers), must_hash, may_rehash);
   }
 
   const char* kind_name() const override { return "AsofJoinNode"; }
@@ -1523,9 +1425,6 @@ class AsofJoinNode : public ExecNode {
     // Get the input
     ARROW_DCHECK(std_has(inputs_, input));
     size_t k = std_find(inputs_, input) - inputs_.begin();
-
-    // Decode dictionary columns
-    ARROW_RETURN_NOT_OK(DictionaryDecodeBatch(batch, k));
 
     // Put into the sequencing queue
     ARROW_RETURN_NOT_OK(state_.at(k)->InsertBatch(std::move(batch)));
@@ -1643,9 +1542,6 @@ class AsofJoinNode : public ExecNode {
   std::vector<col_index_t> indices_of_on_key_;
   std::vector<std::vector<col_index_t>> indices_of_by_key_;
   std::vector<std::unique_ptr<KeyHasher>> key_hashers_;
-  std::vector<std::vector<col_index_t>> indices_of_input_dict_columns_;
-  std::vector<col_index_t> indices_of_output_dict_columns_;
-  std::shared_ptr<Schema> underlying_output_schema_;
   bool must_hash_;
   bool may_rehash_;
   // InputStates
@@ -1680,9 +1576,6 @@ AsofJoinNode::AsofJoinNode(ExecPlan* plan, NodeVector inputs,
                            AsofJoinNodeOptions join_options,
                            std::shared_ptr<Schema> output_schema,
                            std::vector<std::unique_ptr<KeyHasher>> key_hashers,
-                           std::vector<std::vector<col_index_t>> indices_of_input_dict_columns,
-                           std::vector<col_index_t> indices_of_output_dict_columns,
-                           std::shared_ptr<Schema> underlying_output_schema,
                            bool must_hash, bool may_rehash)
     : ExecNode(plan, inputs, input_labels,
                /*output_schema=*/std::move(output_schema)),
@@ -1690,9 +1583,6 @@ AsofJoinNode::AsofJoinNode(ExecPlan* plan, NodeVector inputs,
       indices_of_on_key_(std::move(indices_of_on_key)),
       indices_of_by_key_(std::move(indices_of_by_key)),
       key_hashers_(std::move(key_hashers)),
-      indices_of_input_dict_columns_(std::move(indices_of_input_dict_columns)),
-      indices_of_output_dict_columns_(std::move(indices_of_output_dict_columns)),
-      underlying_output_schema_(std::move(underlying_output_schema)),
       must_hash_(must_hash),
       may_rehash_(may_rehash),
       tolerance_(TolType(join_options.tolerance)),
