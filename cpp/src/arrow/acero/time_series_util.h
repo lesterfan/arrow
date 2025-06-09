@@ -27,5 +27,8 @@ template <typename T, enable_if_t<std::is_integral<T>::value, bool> = true>
 uint64_t NormalizeTime(T t);
 
 uint64_t GetTime(const RecordBatch* batch, Type::type time_type, int col, uint64_t row);
+uint64_t GetTimeDict(
+    const RecordBatch* batch, Type::type index_type,
+    Type::type value_type, int col, uint64_t row);
 
 }  // namespace arrow::acero

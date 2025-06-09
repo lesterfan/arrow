@@ -735,13 +735,17 @@ struct BasicTest {
       ARROW_SCOPED_TRACE("Iteration: ", i);
       auto time_type = maybe_wrap_with_dict(time_types[time_distribution(engine)]);
       ARROW_SCOPED_TRACE("Time type: ", *time_type);
-      auto key_type = maybe_wrap_with_dict(key_types[key_distribution(engine)]);
+      // auto key_type = maybe_wrap_with_dict(key_types[key_distribution(engine)]);
+      auto key_type = key_types[key_distribution(engine)];
       ARROW_SCOPED_TRACE("Key type: ", *key_type);
-      auto l_type = maybe_wrap_with_dict(l_types[l_distribution(engine)]);
+      // auto l_type = maybe_wrap_with_dict(l_types[l_distribution(engine)]);
+      auto l_type = l_types[l_distribution(engine)];
       ARROW_SCOPED_TRACE("Left type: ", *l_type);
-      auto r0_type = maybe_wrap_with_dict(r0_types[r0_distribution(engine)]);
+      // auto r0_type = maybe_wrap_with_dict(r0_types[r0_distribution(engine)]);
+      auto r0_type = r0_types[r0_distribution(engine)];
       ARROW_SCOPED_TRACE("Right-0 type: ", *r0_type);
-      auto r1_type = maybe_wrap_with_dict(r1_types[r1_distribution(engine)]);
+      // auto r1_type = maybe_wrap_with_dict(r1_types[r1_distribution(engine)]);
+      auto r1_type = r1_types[r1_distribution(engine)];
       ARROW_SCOPED_TRACE("Right-1 type: ", *r1_type);
 
       RunTypes({time_type, key_type, l_type, r0_type, r1_type}, batches_runner);

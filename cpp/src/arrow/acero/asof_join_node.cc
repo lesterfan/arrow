@@ -30,10 +30,12 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <iostream>
 
 #include "arrow/acero/exec_plan.h"
 #include "arrow/acero/options.h"
 #include "arrow/acero/unmaterialized_table_internal.h"
+#include "arrow/type_fwd.h"
 #ifndef NDEBUG
 #  include "arrow/acero/options_internal.h"
 #endif
@@ -85,6 +87,18 @@ template <typename T, typename V = typename T::value_type,
           typename D = typename T::difference_type>
 inline D std_index(const T& container, const V& val) {
   return std_find(container, val) - container.begin();
+}
+
+bool CompatibleTypes(const DataType& a, const DataType& b) {
+  const DataType* a_value = static_cast<const DataType*>(&a);
+  if (a.id() == Type::DICTIONARY) {
+    a_value = checked_cast<const DictionaryType&>(a).value_type().get();
+  }
+  const DataType* b_value = static_cast<const DataType*>(&b);
+  if (b.id() == Type::DICTIONARY) {
+    b_value = checked_cast<const DictionaryType&>(b).value_type().get();
+  }
+  return a_value->Equals(*b_value);
 }
 
 typedef uint64_t ByType;
@@ -489,6 +503,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
         time_col_index_(time_col_index),
         key_col_index_(key_col_index),
         time_type_id_(schema_->fields()[time_col_index_]->type()->id()),
+        time_index_type_id_(Type::NA),
         key_type_id_(key_col_index.size()),
         key_hasher_(key_hasher),
         node_(node),
@@ -499,6 +514,12 @@ class InputState : public util::SerialSequencingQueue::Processor {
         memo_(DEBUG_ADD(/*no_future=*/index == 0 || !tolerance.positive, node, index)) {
     for (size_t k = 0; k < key_col_index_.size(); k++) {
       key_type_id_[k] = schema_->fields()[key_col_index_[k]]->type()->id();
+    }
+    if (time_type_id_ == Type::DICTIONARY) {
+      auto& dict_type =
+          checked_cast<const DictionaryType&>(*schema_->fields()[time_col_index_]->type());
+      time_type_id_ = dict_type.value_type()->id();
+      time_index_type_id_ = dict_type.index_type()->id();
     }
   }
 
@@ -612,9 +633,16 @@ class InputState : public util::SerialSequencingQueue::Processor {
     }
   }
 
+  OnType GetTime(const RecordBatch* batch, int col, uint64_t row) const {
+    if (time_index_type_id_ == Type::NA) {
+      return arrow::acero::GetTime(batch, time_type_id_, col, row);
+    } else {
+      return arrow::acero::GetTimeDict(batch,time_index_type_id_, time_type_id_, col, row);
+    }
+  }
+
   inline OnType GetLatestTime() const {
-    return GetTime(GetLatestBatch().get(), time_type_id_, time_col_index_,
-                   latest_ref_row_);
+    return GetTime(GetLatestBatch().get(), time_col_index_, latest_ref_row_);
   }
 
 #undef LATEST_VAL_CASE
@@ -630,6 +658,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
     if (have_active_batch) {
       OnType next_time = GetLatestTime();
       if (latest_time_ > next_time) {
+        std::cout << "latest_time_=" << latest_time_ << " next_time=" << next_time << std::endl;
         return Status::Invalid("AsofJoin does not allow out-of-order on-key values");
       }
       latest_time_ = next_time;
@@ -641,8 +670,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
         have_active_batch &= !queue_.TryPop();
         if (have_active_batch) {
           DCHECK_GT(queue_.Front()->num_rows(), 0);  // empty batches disallowed
-          memo_.UpdateTime(GetTime(queue_.Front().get(), time_type_id_, time_col_index_,
-                                   0));  // time changed
+          memo_.UpdateTime(GetTime(queue_.Front().get(), time_col_index_, 0));  // time changed
         }
       }
     }
@@ -786,6 +814,9 @@ class InputState : public util::SerialSequencingQueue::Processor {
   std::vector<col_index_t> key_col_index_;
   // Type id of the time column
   Type::type time_type_id_;
+  // Type id of the time column's index type or Type::NA if the time column
+  // is not a dictionary
+  Type::type time_index_type_id_;
   // Type id of the key column
   std::vector<Type::type> key_type_id_;
   // Hasher for key elements
@@ -1175,6 +1206,8 @@ class AsofJoinNode : public ExecNode {
       case Type::TIME64:
       case Type::TIMESTAMP:
         return true;
+      case Type::DICTIONARY:
+        return is_valid_on_type(*checked_cast<const DictionaryType&>(type).value_type());
       default:
         return false;
     }
@@ -1266,9 +1299,9 @@ class AsofJoinNode : public ExecNode {
 
       if (on_key_type == NULLPTR) {
         on_key_type = on_field->type().get();
-      } else if (*on_key_type != *on_field->type()) {
-        return Status::Invalid("Expected on-key type ", *on_key_type, " but got ",
-                               *on_field->type(), " for field ", on_field->name(),
+      } else if (!CompatibleTypes(*on_key_type, *on_field->type())) {
+        return Status::Invalid("Incompatible data types for on-key: expected a type compatible with ",
+                               *on_key_type, " but got ", *on_field->type(), " for field ", on_field->name(),
                                " in input ", j);
       }
       for (size_t k = 0; k < n_by; k++) {
