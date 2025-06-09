@@ -91,12 +91,13 @@ uint64_t GetTimeDict(
       DCHECK(false);  // cannot happen
   }
 
+  // TODO: handle nulls
 #define VALUE_CASE(id)                                      \
   case Type::id: {                                          \
     using T = typename TypeIdTraits<Type::id>::Type;        \
     using CType = typename TypeTraits<T>::CType;            \
-    std::cout << NormalizeTime(data->GetValues<CType>(1)[index]) << std::endl; \
-    return NormalizeTime(dictionary->data()->GetValues<CType>(1)[index]); \ // TODO: Handle nulls
+    std::cout << NormalizeTime(dictionary->GetValues<CType>(1)[index]) << std::endl; \
+    return NormalizeTime(dictionary->GetValues<CType>(1)[index]); \
   }
 
   auto dictionary = batch->column_data(col)->dictionary;
