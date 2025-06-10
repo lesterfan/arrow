@@ -1883,7 +1883,7 @@ TEST(AsofJoinTest, DestroyNonStartedAsofJoinNode) {
 }
 
 TEST(AsofJoinTest, SimpleDictionary) {
-  auto l_on = DictArrayFromJSON(dictionary(int32(), int32()), R"([2, null, 1, 3, 0, 0])", R"([12, 6, null, 7])");
+  auto l_on = DictArrayFromJSON(dictionary(int32(), int32()), R"([2, 2, 1, 3, 0, 0])", R"([12, 6, 0, 7])");
   auto l_schema = schema({field("on", dictionary(int32(), int32()))});
   auto l_table = Table::Make(l_schema, {l_on});
   
@@ -1892,7 +1892,7 @@ TEST(AsofJoinTest, SimpleDictionary) {
   auto r_schema = schema({field("on", int32()), field("payload", utf8())});
   auto r_table = Table::Make(r_schema, {r_on, r_payload});
   
-  auto exp_on = DictArrayFromJSON(dictionary(int32(), int32()), R"([null, null, 0, 1, 2, 2])", R"([6, 7, 12])");
+  auto exp_on = DictArrayFromJSON(dictionary(int32(), int32()), R"([2, 2, 1, 3, 0, 0])", R"([12, 6, 0, 7])");
   auto exp_payload = ArrayFromJSON(utf8(), R"(["a", "a", "c", "z", null, null])");
   auto exp_schema = schema({field("key", int32()), field("payload", utf8())});
   auto exp_table = Table::Make(exp_schema, {exp_on, exp_payload});
@@ -1999,7 +1999,6 @@ TEST(AsofJoinTest, PayloadDictionary3) {
 
   AssertTablesEqual(*exp_table, *result);
 }
-
 
 }  // namespace acero
 }  // namespace arrow

@@ -658,7 +658,6 @@ class InputState : public util::SerialSequencingQueue::Processor {
     if (have_active_batch) {
       OnType next_time = GetLatestTime();
       if (latest_time_ > next_time) {
-        std::cout << "latest_time_=" << latest_time_ << " next_time=" << next_time << std::endl;
         return Status::Invalid("AsofJoin does not allow out-of-order on-key values");
       }
       latest_time_ = next_time;

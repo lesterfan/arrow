@@ -17,8 +17,6 @@
 
 #include "arrow/array/data.h"
 
-#include <iostream>
-
 #include "arrow/acero/time_series_util.h"
 #include "arrow/util/logging.h"
 
@@ -32,12 +30,10 @@ inline uint64_t NormalizeTime(T t) {
 }
 
 uint64_t GetTime(const RecordBatch* batch, Type::type time_type, int col, uint64_t row) {
-  std::cout << "GetTime(" << batch << ", " << time_type << ", " << col << ", " << row << ") = ";
 #define LATEST_VAL_CASE(id, val)                     \
   case Type::id: {                                   \
     using T = typename TypeIdTraits<Type::id>::Type; \
     using CType = typename TypeTraits<T>::CType;     \
-    std::cout << val(data->GetValues<CType>(1)[row]) << std::endl; \
     return val(data->GetValues<CType>(1)[row]);      \
   }
 
@@ -67,7 +63,6 @@ uint64_t GetTime(const RecordBatch* batch, Type::type time_type, int col, uint64
 uint64_t GetTimeDict(
     const RecordBatch* batch, Type::type index_type,
     Type::type value_type, int col, uint64_t row) {
-  std::cout << "GetTimeDict(" << batch << ", " << index_type << ", " << value_type << ", " << col << ", " << row << ") = ";
 #define INDEX_CASE(id)                               \
   case Type::id: {                                   \
     using T = typename TypeIdTraits<Type::id>::Type; \
@@ -91,12 +86,11 @@ uint64_t GetTimeDict(
       DCHECK(false);  // cannot happen
   }
 
-  // TODO: handle nulls
-#define VALUE_CASE(id)                                      \
-  case Type::id: {                                          \
-    using T = typename TypeIdTraits<Type::id>::Type;        \
-    using CType = typename TypeTraits<T>::CType;            \
-    std::cout << NormalizeTime(dictionary->GetValues<CType>(1)[index]) << std::endl; \
+  // TODO: handle nulls?
+#define VALUE_CASE(id)                                            \
+  case Type::id: {                                                \
+    using T = typename TypeIdTraits<Type::id>::Type;              \
+    using CType = typename TypeTraits<T>::CType;                  \
     return NormalizeTime(dictionary->GetValues<CType>(1)[index]); \
   }
 
