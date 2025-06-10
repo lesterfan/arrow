@@ -161,27 +161,41 @@ Result<BatchesWithSchema> MakeBatchesFromNumString(
     return MakeBatchesFromNumStringImpl(schema, json_strings, multiplicity);
   }
 
-  // Otherwise, we create batches using the simple schema
+  // Otherwise, we create batches using the simple schema,
   auto simple_schema =
       std::make_shared<Schema>(simple_fields, schema->endianness(), schema->metadata());
   ARROW_ASSIGN_OR_RAISE(auto simple_batches,
       MakeBatchesFromNumStringImpl(simple_schema, json_strings, multiplicity));
+
+  // create the dictionaries for the dictionary columns,
+  std::unordered_map<int, std::shared_ptr<Array>> unified_dictionaries;
+  for (int i = 0; i < schema->num_fields(); i++) {
+    if (schema->field(i)->type()->id() != Type::DICTIONARY)
+      continue;
+    auto value_type =
+        checked_cast<const DictionaryType&>(*schema->field(i)->type()).value_type();
+    std::vector<std::shared_ptr<Array>> column_chunks;
+    for (const auto& batch : simple_batches.batches)
+      column_chunks.push_back(batch.values[i].make_array());
+    auto whole_column = std::make_shared<ChunkedArray>(std::move(column_chunks), value_type);
+
+    ARROW_ASSIGN_OR_RAISE(auto unique, compute::CallFunction("unique", {whole_column}));
+    unified_dictionaries[i] = unique.make_array();
+  }
   
   // and dictionary-encode the columns that were originally dictionaries
-  // TODO: For the real implementation, each column should share a dictionary, so
-  // we need to use the Unique compute function to find all the unique values in
-  // the column and then pass that dictionary to DictionaryEncodeOptions when we
-  // encode each batch.
   BatchesWithSchema batches;
   batches.schema = schema;
   for (ExecBatch& batch : simple_batches.batches) {
     std::vector<Datum> values;
     for (int i = 0; i < schema->num_fields(); i++) {
       if (schema->field(i)->type()->id() == Type::DICTIONARY) {
-        auto options = compute::DictionaryEncodeOptions::Defaults();
-        ARROW_ASSIGN_OR_RAISE(auto dict_column,
-          compute::CallFunction("dictionary_encode", {std::move(batch.values[i])}, &options));
-        values.push_back(std::move(dict_column));
+        auto options = compute::SetLookupOptions(unified_dictionaries[i]);
+        ARROW_ASSIGN_OR_RAISE(auto indices,
+          compute::CallFunction("index_in", {std::move(batch.values[i])}, &options));
+        ARROW_ASSIGN_OR_RAISE(auto array,
+          DictionaryArray::FromArrays(schema->field(i)->type(), indices.make_array(), unified_dictionaries[i]))
+        values.push_back(array);
       } else {
         values.push_back(std::move(batch.values[i]));
       }
@@ -235,6 +249,40 @@ void BuildZeroDictionaryBaseBinaryArray(std::shared_ptr<Array>& empty, int64_t l
   BuildZeroPrimitiveArray(indices, int32(), length);
   auto dict_type = arrow::dictionary(int32(), dictionary->type());
   ASSERT_OK_AND_ASSIGN(empty, DictionaryArray::FromArrays(dict_type, indices, dictionary));
+}
+
+// TODO: Maybe modify tests to make sure that dictionaries are consistent across
+// chunks so that we can get rid of this function
+Result<std::shared_ptr<Table>> DecodeDictionaryColumns(const Table& table) {
+  std::vector<std::shared_ptr<Field>> new_fields;
+  std::vector<std::shared_ptr<ChunkedArray>> new_columns;
+
+  for (int i = 0; i < table.num_columns(); i++) {
+    const auto& col = table.column(i);
+    const auto& field = table.schema()->field(i);
+
+    if (col->type()->id() == Type::DICTIONARY) {
+      const auto& dict_type =
+          checked_cast<DictionaryType&>(*col->type());
+
+      std::vector<std::shared_ptr<Array>> new_chunks;
+      for (const auto& chunk : col->chunks()) {
+        ARROW_ASSIGN_OR_RAISE(
+            Datum unpacked_chunk,
+            compute::CallFunction("dictionary_decode", {chunk}));
+        new_chunks.push_back(unpacked_chunk.make_array());
+      }
+
+      new_fields.push_back(field->WithType(dict_type.value_type()));
+      new_columns.push_back(std::make_shared<ChunkedArray>(new_chunks, dict_type.value_type()));
+    } else {
+      new_fields.push_back(field);
+      new_columns.push_back(col);
+    }
+  }
+
+  auto new_schema = std::make_shared<Schema>(new_fields);
+  return Table::Make(new_schema, new_columns);
 }
 
 AsofJoinNodeOptions GetRepeatedOptions(size_t repeat, FieldRef on_key,
@@ -594,8 +642,10 @@ struct BasicTest {
                           << res_table.ToString() << std::endl;
           }
 #endif
-          AssertTablesEqual(exp_table, res_table, /*same_chunk_layout=*/true,
-                            /*flatten=*/true);
+          auto decoded_exp_table = DecodeDictionaryColumns(exp_table).ValueOrDie();
+          auto decoded_res_table = DecodeDictionaryColumns(res_table).ValueOrDie();
+          AssertTablesEqual(*decoded_exp_table, *decoded_res_table,
+                            /*same_chunk_layout=*/true, /*flatten=*/true);
         });
   }
 
@@ -738,14 +788,11 @@ struct BasicTest {
       // auto key_type = maybe_wrap_with_dict(key_types[key_distribution(engine)]);
       auto key_type = key_types[key_distribution(engine)];
       ARROW_SCOPED_TRACE("Key type: ", *key_type);
-      // auto l_type = maybe_wrap_with_dict(l_types[l_distribution(engine)]);
-      auto l_type = l_types[l_distribution(engine)];
+      auto l_type = maybe_wrap_with_dict(l_types[l_distribution(engine)]);
       ARROW_SCOPED_TRACE("Left type: ", *l_type);
-      // auto r0_type = maybe_wrap_with_dict(r0_types[r0_distribution(engine)]);
-      auto r0_type = r0_types[r0_distribution(engine)];
+      auto r0_type = maybe_wrap_with_dict(r0_types[r0_distribution(engine)]);
       ARROW_SCOPED_TRACE("Right-0 type: ", *r0_type);
-      // auto r1_type = maybe_wrap_with_dict(r1_types[r1_distribution(engine)]);
-      auto r1_type = r1_types[r1_distribution(engine)];
+      auto r1_type = maybe_wrap_with_dict(r1_types[r1_distribution(engine)]);
       ARROW_SCOPED_TRACE("Right-1 type: ", *r1_type);
 
       RunTypes({time_type, key_type, l_type, r0_type, r1_type}, batches_runner);

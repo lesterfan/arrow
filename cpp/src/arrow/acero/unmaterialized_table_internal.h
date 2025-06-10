@@ -276,7 +276,10 @@ class UnmaterializedCompositeTable {
     for (const auto& unmaterialized_slice : slices) {
       const auto& [batch, start, end] = unmaterialized_slice.components[table_index];
       if (batch) {
-        if (!dictionary) {
+        if (dictionary) {
+          // TODO: Check that the dictionary is the same as the one in the batch
+          // We should probably do this somewhere else because we have to do it for every dictionary column
+        } else {
           dictionary = arrow::internal::checked_cast<DictionaryArray&>(*batch->column(column_index)).dictionary();
         }
         for (uint64_t rowNum = start; rowNum < end; ++rowNum) {
