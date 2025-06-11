@@ -1248,6 +1248,8 @@ class AsofJoinNode : public ExecNode {
       case Type::BINARY:
       case Type::LARGE_BINARY:
         return true;
+      case Type::DICTIONARY:
+        return is_valid_by_type(*checked_cast<const DictionaryType&>(type).value_type());
       default:
         return false;
     }
