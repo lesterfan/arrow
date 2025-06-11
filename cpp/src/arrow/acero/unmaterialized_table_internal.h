@@ -17,7 +17,9 @@
 
 #pragma once
 
+#include <memory>
 #include <optional>
+#include <iostream>
 #include <vector>
 #include "arrow/array/builder_base.h"
 #include "arrow/array/builder_binary.h"
@@ -272,14 +274,14 @@ class UnmaterializedCompositeTable {
 
     const auto& [table_index, column_index] = output_col_to_src[i_col];
 
-    std::shared_ptr<Array> dictionary; // TODO: Maybe store the dictionary in the InputState or something?
+    // TODO: Is this the best way to get dictionary? InputStates already keep track of dictionaries
+    // but we would have to add InputState and AsofJoinNode to header file. We would also have to
+    // synchronize access.
+    std::shared_ptr<Array> dictionary;
     for (const auto& unmaterialized_slice : slices) {
       const auto& [batch, start, end] = unmaterialized_slice.components[table_index];
       if (batch) {
-        if (dictionary) {
-          // TODO: Check that the dictionary is the same as the one in the batch
-          // We should probably do this somewhere else because we have to do it for every dictionary column
-        } else {
+        if (!dictionary) {
           dictionary = arrow::internal::checked_cast<DictionaryArray&>(*batch->column(column_index)).dictionary();
         }
         for (uint64_t rowNum = start; rowNum < end; ++rowNum) {

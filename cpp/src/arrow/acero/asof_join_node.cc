@@ -506,6 +506,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
         time_index_type_id_(Type::NA),
         key_type_id_(key_col_index.size()),
         key_hasher_(key_hasher),
+        dictionaries_(schema->num_fields()),
         node_(node),
         index_(index),
         must_hash_(must_hash),
@@ -735,6 +736,19 @@ class InputState : public util::SerialSequencingQueue::Processor {
     auto rb = *batch.ToRecordBatch(schema_);
     DEBUG_SYNC(node_, "received batch from input ", index_, ":", DEBUG_MANIP(std::endl),
                rb->ToString(), DEBUG_MANIP(std::endl));
+    for (col_index_t i = 0; i < rb->num_columns(); i++) {
+      if (rb->column(i)->type()->id() != Type::DICTIONARY) continue;
+      auto& dictionary = arrow::internal::checked_cast<DictionaryArray&>(*rb->column(i)).dictionary();
+      if (!dictionaries_[i]) {
+        dictionaries_[i] = dictionary;
+      } else if (!dictionaries_[i]->Equals(*dictionary)) {
+        // TODO: I think LHS table could actually use multiple dictionaries, so we
+        // could special-case index_ == 0
+        return Status::NotImplemented(
+            "Input ", index_, " uses multiple dictionaries for field ",
+            rb->schema()->field(i)->name());
+      }
+    }
     return Push(rb);
   }
   void Rehash() {
@@ -820,6 +834,8 @@ class InputState : public util::SerialSequencingQueue::Processor {
   std::vector<Type::type> key_type_id_;
   // Hasher for key elements
   mutable KeyHasher* key_hasher_;
+  // Dictionaries for the input columns, if any
+  std::vector<std::shared_ptr<Array>> dictionaries_;
   // Owning node
   AsofJoinNode* node_;
   // Index of this input
