@@ -17,9 +17,7 @@
 
 #pragma once
 
-#include <memory>
 #include <optional>
-#include <iostream>
 #include <vector>
 #include "arrow/array/builder_base.h"
 #include "arrow/array/builder_binary.h"
@@ -28,8 +26,6 @@
 #include "arrow/array/util.h"
 #include "arrow/memory_pool.h"
 #include "arrow/record_batch.h"
-#include "arrow/result.h"
-#include "arrow/type.h"
 #include "arrow/type_traits.h"
 #include "arrow/util/logging.h"
 

@@ -34,7 +34,6 @@
 #include "arrow/acero/exec_plan.h"
 #include "arrow/acero/options.h"
 #include "arrow/acero/unmaterialized_table_internal.h"
-#include "arrow/type_fwd.h"
 #ifndef NDEBUG
 #  include "arrow/acero/options_internal.h"
 #endif
@@ -755,7 +754,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
       if (!dictionaries_[i]) {
         dictionaries_[i] = dictionary;
         ARROW_ASSIGN_OR_RAISE(auto metadata, ColumnMetadataFromDataType(dictionary->type()));
-        key_hasher_->SetDictionaryArray(i,ColumnArrayFromArrayDataAndMetadata(
+        key_hasher_->SetDictionaryArray(i, ColumnArrayFromArrayDataAndMetadata(
             dictionary->data(), metadata, 0, dictionary->length()));
       } else if (!dictionaries_[i]->Equals(*dictionary)) {
         return Status::NotImplemented(

@@ -25,7 +25,6 @@
 #include <string_view>
 #include "arrow/acero/exec_plan.h"
 #include "arrow/testing/future_util.h"
-#include "arrow/type_fwd.h"
 #ifndef NDEBUG
 #  include <sstream>
 #endif
@@ -87,7 +86,7 @@ bool is_temporal_primitive(Type::type type_id) {
 }
 
 // Can't handle dictionary fields in schema
-Result<BatchesWithSchema> MakeBatchesFromNumStringImpl(
+Result<BatchesWithSchema> MakeBatchesFromNumStringNoDict(
     const std::shared_ptr<Schema>& schema,
     const std::vector<std::string_view>& json_strings, int multiplicity = 1) {
   FieldVector num_fields;
@@ -158,14 +157,14 @@ Result<BatchesWithSchema> MakeBatchesFromNumString(
 
   // If there are no dictionary columns, we can use the simpler implementation
   if (!has_dict_columns) {
-    return MakeBatchesFromNumStringImpl(schema, json_strings, multiplicity);
+    return MakeBatchesFromNumStringNoDict(schema, json_strings, multiplicity);
   }
 
   // Otherwise, we create batches using the simple schema,
   auto simple_schema =
       std::make_shared<Schema>(simple_fields, schema->endianness(), schema->metadata());
   ARROW_ASSIGN_OR_RAISE(auto simple_batches,
-      MakeBatchesFromNumStringImpl(simple_schema, json_strings, multiplicity));
+      MakeBatchesFromNumStringNoDict(simple_schema, json_strings, multiplicity));
 
   // create the dictionaries for the dictionary columns,
   std::unordered_map<int, std::shared_ptr<Array>> unified_dictionaries;
