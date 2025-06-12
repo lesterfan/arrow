@@ -185,6 +185,10 @@ class ARROW_EXPORT Hashing64 {
   static void HashFixed(bool combine_hashes, uint32_t num_keys, uint64_t key_length,
                         const uint8_t* keys, uint64_t* hashes);
 
+  static void HashDict(bool combine_hashes, uint32_t num_keys, uint32_t index_length,
+                       const uint8_t* indices, const KeyColumnArray* dict_array,
+                       uint64_t* hashes);
+
  private:
   static const uint64_t PRIME64_1 = 0x9E3779B185EBCA87ULL;
   static const uint64_t PRIME64_2 = 0xC2B2AE3D27D4EB4FULL;

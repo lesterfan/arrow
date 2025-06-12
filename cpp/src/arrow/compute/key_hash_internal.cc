@@ -821,6 +821,33 @@ void Hashing64::HashFixed(bool combine_hashes, uint32_t num_keys, uint64_t key_l
   }
 }
 
+void Hashing64::HashDict(bool combine_hashes, uint32_t num_keys, uint32_t index_length,
+                         const uint8_t* indices, const KeyColumnArray* dict_array,
+                         uint64_t* hashes) {
+  for (uint32_t ikey = 0; ikey < num_keys; ikey++) {
+    uint64_t index;
+    switch (index_length) {
+      case sizeof(uint8_t):
+        index = reinterpret_cast<const uint8_t*>(indices)[ikey];
+        break;
+      case sizeof(uint16_t):
+        index = reinterpret_cast<const uint16_t*>(indices)[ikey];
+        break;
+      case sizeof(uint32_t):
+        index = reinterpret_cast<const uint32_t*>(indices)[ikey];
+        break;
+      case sizeof(uint64_t):
+        index = reinterpret_cast<const uint64_t*>(indices)[ikey];
+        break;
+      default:
+        ARROW_DCHECK(false);
+        break;
+    }
+    // Hash dict_array[index] and store result in hashes[ikey]
+  }
+  
+}
+
 void Hashing64::HashMultiColumn(const std::vector<KeyColumnArray>& cols,
                                 LightContext* ctx, uint64_t* hashes) {
   uint32_t num_rows = static_cast<uint32_t>(cols[0].length());
@@ -864,7 +891,13 @@ void Hashing64::HashMultiColumn(const std::vector<KeyColumnArray>& cols,
         }
       }
 
-      if (cols[icol].metadata().is_fixed_length) {
+      if (cols[icol].dictionary_array() != NULLPTR) {
+        uint32_t index_length = cols[icol].metadata().fixed_length;
+        HashDict(icol > 0, batch_size_next, index_length,
+                 cols[icol].data(1) + first_row * index_length,
+                 cols[icol].dictionary_array(),
+                 hashes + first_row);
+      } if (cols[icol].metadata().is_fixed_length) {
         uint64_t key_length = cols[icol].metadata().fixed_length;
         if (key_length == 0) {
           HashBit(icol > 0, cols[icol].bit_offset(1), batch_size_next,

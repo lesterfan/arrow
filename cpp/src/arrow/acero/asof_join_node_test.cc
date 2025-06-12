@@ -776,6 +776,7 @@ struct BasicTest {
     std::uniform_int_distribution<size_t> r1_distribution(0, r1_types.size() - 1);
     std::uniform_int_distribution<int> dict_distribution(0, 3);
 
+    // TODO: tables should have different dictionary-ness
     auto maybe_wrap_with_dict = [&dict_distribution, &engine](const auto& t) {
       bool dict = dict_distribution(engine) == 0; // 25% of columns are dictionary-encoded
       return dict ? dictionary(int32(), t) : t;
