@@ -136,11 +136,11 @@ Result<BatchesWithSchema> MakeBatchesFromNumStringNoDict(
   return batches;
 }
 
-
 // Can handle dictionary fields in schema
 Result<BatchesWithSchema> MakeBatchesFromNumString(
     const std::shared_ptr<Schema>& schema,
-    const std::vector<std::string_view>& json_strings, int multiplicity = 1) {
+    const std::vector<std::string_view>& json_strings,
+    int multiplicity = 1, bool unify_dictionaries = true) {
   // Create a simple schema with the value type in the place of any dictionary types
   bool has_dict_columns = false;
   FieldVector simple_fields;
@@ -160,47 +160,65 @@ Result<BatchesWithSchema> MakeBatchesFromNumString(
     return MakeBatchesFromNumStringNoDict(schema, json_strings, multiplicity);
   }
 
-  // Otherwise, we create batches using the simple schema,
+  // Otherwise, we create batches using the simple schema
   auto simple_schema =
       std::make_shared<Schema>(simple_fields, schema->endianness(), schema->metadata());
   ARROW_ASSIGN_OR_RAISE(auto simple_batches,
       MakeBatchesFromNumStringNoDict(simple_schema, json_strings, multiplicity));
 
-  // create the dictionaries for the dictionary columns,
-  std::unordered_map<int, std::shared_ptr<Array>> unified_dictionaries;
-  for (int i = 0; i < schema->num_fields(); i++) {
-    if (schema->field(i)->type()->id() != Type::DICTIONARY)
-      continue;
-    auto value_type =
-        checked_cast<const DictionaryType&>(*schema->field(i)->type()).value_type();
-    std::vector<std::shared_ptr<Array>> column_chunks;
-    for (const auto& batch : simple_batches.batches)
-      column_chunks.push_back(batch.values[i].make_array());
-    auto whole_column = std::make_shared<ChunkedArray>(std::move(column_chunks), value_type);
-
-    ARROW_ASSIGN_OR_RAISE(auto unique, compute::CallFunction("unique", {whole_column}));
-    unified_dictionaries[i] = unique.make_array();
-  }
-  
-  // and dictionary-encode the columns that were originally dictionaries
   BatchesWithSchema batches;
   batches.schema = schema;
-  for (ExecBatch& batch : simple_batches.batches) {
-    std::vector<Datum> values;
+  if (unify_dictionaries) {
+    // We first create the unified dictionaries for the dictionary columns
+    std::unordered_map<int, std::shared_ptr<Array>> unified_dictionaries;
     for (int i = 0; i < schema->num_fields(); i++) {
-      if (schema->field(i)->type()->id() == Type::DICTIONARY) {
-        auto options = compute::SetLookupOptions(unified_dictionaries[i]);
-        ARROW_ASSIGN_OR_RAISE(auto indices,
-          compute::CallFunction("index_in", {std::move(batch.values[i])}, &options));
-        ARROW_ASSIGN_OR_RAISE(auto array,
-          DictionaryArray::FromArrays(schema->field(i)->type(), indices.make_array(), unified_dictionaries[i]))
-        values.push_back(array);
-      } else {
-        values.push_back(std::move(batch.values[i]));
-      }
+      if (schema->field(i)->type()->id() != Type::DICTIONARY)
+        continue;
+      auto value_type =
+          checked_cast<const DictionaryType&>(*schema->field(i)->type()).value_type();
+      std::vector<std::shared_ptr<Array>> column_chunks;
+      for (const auto& batch : simple_batches.batches)
+        column_chunks.push_back(batch.values[i].make_array());
+      auto whole_column = std::make_shared<ChunkedArray>(std::move(column_chunks), value_type);
+
+      ARROW_ASSIGN_OR_RAISE(auto unique, compute::CallFunction("unique", {whole_column}));
+      unified_dictionaries[i] = unique.make_array();
     }
-    batches.batches.emplace_back(std::move(values), batch.length);
-    batches.batches.back().index = batch.index;
+
+    // And dictionary-encode the columns that were originally dictionaries
+    for (ExecBatch& batch : simple_batches.batches) {
+      std::vector<Datum> values;
+      for (int i = 0; i < schema->num_fields(); i++) {
+        if (schema->field(i)->type()->id() == Type::DICTIONARY) {
+          auto options = compute::SetLookupOptions(unified_dictionaries[i]);
+          ARROW_ASSIGN_OR_RAISE(auto indices,
+            compute::CallFunction("index_in", {std::move(batch.values[i])}, &options));
+          ARROW_ASSIGN_OR_RAISE(auto array,
+            DictionaryArray::FromArrays(schema->field(i)->type(), indices.make_array(), unified_dictionaries[i]))
+          values.push_back(array);
+        } else {
+          values.push_back(std::move(batch.values[i]));
+        }
+      }
+      batches.batches.emplace_back(std::move(values), batch.length);
+      batches.batches.back().index = batch.index;
+    }
+  } else {
+    for (ExecBatch& batch : simple_batches.batches) {
+      std::vector<Datum> values;
+      for (int i = 0; i < schema->num_fields(); i++) {
+        if (schema->field(i)->type()->id() == Type::DICTIONARY) {
+          auto options = compute::DictionaryEncodeOptions::Defaults();
+          ARROW_ASSIGN_OR_RAISE(auto dict_column,
+            compute::CallFunction("dictionary_encode", {std::move(batch.values[i])}, &options));
+          values.push_back(std::move(dict_column));
+        } else {
+          values.push_back(std::move(batch.values[i]));
+        }
+      }
+      batches.batches.emplace_back(std::move(values), batch.length);
+      batches.batches.back().index = batch.index;
+    }
   }
   return batches;
 }
@@ -439,6 +457,23 @@ void DoInvalidPlanTest(const BatchesWithSchema& l_batches,
   }
 }
 
+void DoNotImplementedPlanTest(const BatchesWithSchema& l_batches,
+                              const BatchesWithSchema& r_batches,
+                              const AsofJoinNodeOptions& join_options,
+                              const std::string& expected_error_str) {
+  ASSERT_OK_AND_ASSIGN(auto plan, ExecPlan::Make(*threaded_exec_context()));
+
+  Declaration join{"asofjoin", join_options};
+  join.inputs.emplace_back(Declaration{
+      "source", SourceNodeOptions{l_batches.schema, l_batches.gen(false, false)}});
+  join.inputs.emplace_back(Declaration{
+      "source", SourceNodeOptions{r_batches.schema, r_batches.gen(false, false)}});
+
+  EXPECT_RAISES_WITH_MESSAGE_THAT(
+    NotImplemented, ::testing::HasSubstr(expected_error_str),
+    DeclarationToStatus(std::move(join), /*use_threads=*/false));
+}
+
 void DoRunInvalidPlanTest(const BatchesWithSchema& l_batches,
                           const BatchesWithSchema& r_batches,
                           const AsofJoinNodeOptions& join_options,
@@ -560,6 +595,19 @@ void DoRunUnorderedPlanTest(bool l_unordered, bool r_unordered,
   DoRunUnorderedPlanTest(l_unordered, r_unordered, l_schema, r_schema,
                          GetRepeatedOptions(2, "time", {"key"}, 1000),
                          "out-of-order on-key values");
+}
+
+void DoRunDifferentDictionariesTest(const std::vector<std::string_view>& l_data,
+                                    const std::vector<std::string_view>& r_data,
+                                    const std::shared_ptr<Schema>& l_schema,
+                                    const std::shared_ptr<Schema>& r_schema,
+                                    const std::string& expected_error_str) {
+  ASSERT_OK_AND_ASSIGN(auto l_batches, MakeBatchesFromNumString(l_schema, l_data, 1, false));
+  ASSERT_OK_AND_ASSIGN(auto r_batches, MakeBatchesFromNumString(r_schema, r_data, 1, false));
+
+  auto options = GetRepeatedOptions(2, "time", {"key"}, 1);
+
+  DoNotImplementedPlanTest(l_batches, r_batches, options, expected_error_str);
 }
 
 struct BasicTestTypes {
@@ -1537,6 +1585,36 @@ TRACED_TEST(AsofJoinTest, TestUnorderedOnKey, {
       /*l_unordered=*/true, /*r_unordered=*/true,
       schema({field("time", int64()), field("key", int32()), field("l_v0", float64())}),
       schema({field("time", int64()), field("key", int32()), field("r0_v0", float64())}));
+})
+
+TRACED_TEST(AsofJoinTest, TestDifferentDictionariesTime, {
+  DoRunDifferentDictionariesTest(
+      {R"([[0, 0], [1, 0]])", // time dictionary = [0, 1]
+       R"([[1, 0], [2, 0]])"}, // time dictionary = [1, 2]
+      {R"([[0, 1], [0, 0], [1, 0], [1, 0]])"},
+      schema({field("time", dictionary(int32(), int64())), field("key", int32())}),
+      schema({field("time", int64()), field("key", int32())}),
+      "Input 0 uses multiple dictionaries for field time");
+})
+
+TRACED_TEST(AsofJoinTest, TestDifferentDictionariesKey, {
+  DoRunDifferentDictionariesTest(
+      {R"([[1, 1], [1, 0]])", // key dictionary = [1, 0]
+       R"([[1, 0], [1, 1]])"}, // key dictionary = [0, 1]
+      {R"([[0, 1], [0, 0], [1, 0], [1, 0]])"},
+      schema({field("time", int32()), field("key", dictionary(int32(), int32()))}),
+      schema({field("time", int32()), field("key", int32())}),
+      "Input 0 uses multiple dictionaries for field key");
+})
+
+TRACED_TEST(AsofJoinTest, TestDifferentDictionariesData, {
+  DoRunDifferentDictionariesTest(
+      {R"([[0, 1], [1, 0]])"},
+      {R"([[0, 1, 8], [0, 0, 9]])", // data dictionary = [8, 9]
+       R"([[0, 1, 6], [0, 0, 7]])"}, // data dictionary = [6, 7]
+      schema({field("time", int32()), field("key", int32())}),
+      schema({field("time", int32()), field("key", int32()), field("data", dictionary(int32(), utf8()))}),
+      "Input 1 uses multiple dictionaries for field data");
 })
 
 struct BackpressureCounters {
