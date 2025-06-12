@@ -1337,7 +1337,7 @@ class AsofJoinNode : public ExecNode {
       for (size_t k = 0; k < n_by; k++) {
         if (by_key_type[k] == NULLPTR) {
           by_key_type[k] = by_field[k]->type().get();
-        } else if (*by_key_type[k] != *by_field[k]->type()) {
+        } else if (!CompatibleTypes(*by_key_type[k], *by_field[k]->type())) {
           return Status::Invalid("Expected by-key type ", *by_key_type[k], " but got ",
                                  *by_field[k]->type(), " for field ", by_field[k]->name(),
                                  " in input ", j);
@@ -1465,11 +1465,16 @@ class AsofJoinNode : public ExecNode {
     for (size_t i = 0; i < n_input; i++) {
       key_hashers.push_back(std::make_unique<KeyHasher>(i, indices_of_by_key[i]));
     }
-    bool must_hash =
-        n_by > 1 ||
-        (n_by == 1 &&
-         !is_primitive(
-             inputs[0]->output_schema()->field(indices_of_by_key[0][0])->type()->id()));
+    bool must_hash = n_by > 1;
+    if (!must_hash && n_by > 0) {
+      for (size_t i = 0; i < n_input; i++) {
+        col_index_t icol = indices_of_by_key[i][0];
+        if (!is_primitive(inputs[i]->output_schema()->field(icol)->type()->id())) {
+          must_hash = true;
+          break;
+        }
+      }
+    }
     bool may_rehash = n_by == 1 && !must_hash;
     return plan->EmplaceNode<AsofJoinNode>(
         plan, inputs, std::move(input_labels), std::move(indices_of_on_key),

@@ -563,7 +563,7 @@ void DoRunUnorderedPlanTest(bool l_unordered, bool r_unordered,
 }
 
 struct BasicTestTypes {
-  std::shared_ptr<DataType> time, key, l_val, r0_val, r1_val;
+  std::shared_ptr<DataType> l_time, r0_time, r1_time, l_key, r0_key, r1_key, l_val, r0_val, r1_val;
 };
 
 struct BasicTest {
@@ -775,7 +775,6 @@ struct BasicTest {
     std::uniform_int_distribution<size_t> r1_distribution(0, r1_types.size() - 1);
     std::uniform_int_distribution<int> dict_distribution(0, 3);
 
-    // TODO: tables should have different dictionary-ness
     auto maybe_wrap_with_dict = [&dict_distribution, &engine](const auto& t) {
       bool dict = dict_distribution(engine) == 0; // 25% of columns are dictionary-encoded
       return dict ? dictionary(int32(), t) : t;
@@ -783,10 +782,16 @@ struct BasicTest {
 
     for (int i = 0; i < 100; i++) {
       ARROW_SCOPED_TRACE("Iteration: ", i);
-      auto time_type = maybe_wrap_with_dict(time_types[time_distribution(engine)]);
-      ARROW_SCOPED_TRACE("Time type: ", *time_type);
-      auto key_type = maybe_wrap_with_dict(key_types[key_distribution(engine)]);
-      ARROW_SCOPED_TRACE("Key type: ", *key_type);
+      auto time_type = time_types[time_distribution(engine)];
+      auto l_time = maybe_wrap_with_dict(time_type);
+      auto r0_time = maybe_wrap_with_dict(time_type);
+      auto r1_time = maybe_wrap_with_dict(time_type);
+      ARROW_SCOPED_TRACE("Time types: ", *l_time, ", ", *r0_time, ", ", *r1_time);
+      auto key_type = key_types[key_distribution(engine)];
+      auto l_key = maybe_wrap_with_dict(key_type);
+      auto r0_key = maybe_wrap_with_dict(key_type);
+      auto r1_key = maybe_wrap_with_dict(key_type);
+      ARROW_SCOPED_TRACE("Key types: ", *l_key, ", ", *r0_key, ", ", *r1_key);
       auto l_type = maybe_wrap_with_dict(l_types[l_distribution(engine)]);
       ARROW_SCOPED_TRACE("Left type: ", *l_type);
       auto r0_type = maybe_wrap_with_dict(r0_types[r0_distribution(engine)]);
@@ -794,7 +799,9 @@ struct BasicTest {
       auto r1_type = maybe_wrap_with_dict(r1_types[r1_distribution(engine)]);
       ARROW_SCOPED_TRACE("Right-1 type: ", *r1_type);
 
-      RunTypes({time_type, key_type, l_type, r0_type, r1_type}, batches_runner);
+      RunTypes(
+          {l_time, r0_time, r1_time, l_key, r0_key, r1_key, l_type, r0_type, r1_type},
+          batches_runner);
       if (testing::Test::HasFatalFailure()) break;
 
       auto end_time = std::chrono::system_clock::now();
@@ -808,15 +815,15 @@ struct BasicTest {
   void RunTypes(BasicTestTypes basic_test_types, BatchesRunner batches_runner) {
     const BasicTestTypes& b = basic_test_types;
     auto l_schema =
-        schema({field("time", b.time), field("key", b.key), field("l_v0", b.l_val)});
+        schema({field("time", b.l_time), field("key", b.l_key), field("l_v0", b.l_val)});
     auto r0_schema =
-        schema({field("time", b.time), field("key", b.key), field("r0_v0", b.r0_val)});
+        schema({field("time", b.r0_time), field("key", b.r0_key), field("r0_v0", b.r0_val)});
     auto r1_schema =
-        schema({field("time", b.time), field("key", b.key), field("r1_v0", b.r1_val)});
+        schema({field("time", b.r1_time), field("key", b.r1_key), field("r1_v0", b.r1_val)});
 
     auto exp_schema = schema({
-        field("time", b.time),
-        field("key", b.key),
+        field("time", b.l_time),
+        field("key", b.l_key),
         field("l_v0", b.l_val),
         field("r0_v0", b.r0_val),
         field("r1_v0", b.r1_val),
@@ -826,6 +833,8 @@ struct BasicTest {
     ASSERT_OK_AND_ASSIGN(auto l_batches, MakeBatchesFromNumString(l_schema, l_data));
     ASSERT_OK_AND_ASSIGN(auto r0_batches, MakeBatchesFromNumString(r0_schema, r0_data));
     ASSERT_OK_AND_ASSIGN(auto r1_batches, MakeBatchesFromNumString(r1_schema, r1_data));
+    // TODO: Values in three tables below are a subset of the values in the
+    // tables above, so we can pass dictionaries down
     ASSERT_OK_AND_ASSIGN(auto exp_nokey_batches,
                          MakeBatchesFromNumString(exp_schema, exp_nokey_data));
     ASSERT_OK_AND_ASSIGN(auto exp_emptykey_batches,
