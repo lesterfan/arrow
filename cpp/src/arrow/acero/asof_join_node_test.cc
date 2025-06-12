@@ -786,8 +786,7 @@ struct BasicTest {
       ARROW_SCOPED_TRACE("Iteration: ", i);
       auto time_type = maybe_wrap_with_dict(time_types[time_distribution(engine)]);
       ARROW_SCOPED_TRACE("Time type: ", *time_type);
-      // auto key_type = maybe_wrap_with_dict(key_types[key_distribution(engine)]);
-      auto key_type = key_types[key_distribution(engine)];
+      auto key_type = maybe_wrap_with_dict(key_types[key_distribution(engine)]);
       ARROW_SCOPED_TRACE("Key type: ", *key_type);
       auto l_type = maybe_wrap_with_dict(l_types[l_distribution(engine)]);
       ARROW_SCOPED_TRACE("Left type: ", *l_type);

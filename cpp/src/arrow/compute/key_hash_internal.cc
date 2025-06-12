@@ -825,7 +825,7 @@ void Hashing64::HashDict(bool combine_hashes, uint32_t num_keys, uint32_t index_
                          const uint8_t* indices, const KeyColumnArray* dict_array,
                          uint64_t* hashes) {
   for (uint32_t ikey = 0; ikey < num_keys; ikey++) {
-    uint64_t index;
+    uint64_t index = 0;
     switch (index_length) {
       case sizeof(uint8_t):
         index = reinterpret_cast<const uint8_t*>(indices)[ikey];
@@ -844,8 +844,24 @@ void Hashing64::HashDict(bool combine_hashes, uint32_t num_keys, uint32_t index_
         break;
     }
     // Hash dict_array[index] and store result in hashes[ikey]
+    // TODO: Handle null values in dictionary
+    if (dict_array->metadata().is_fixed_length) {
+      uint64_t value_length = dict_array->metadata().fixed_length;
+      if (value_length == 0) {
+        HashBit(combine_hashes, dict_array->bit_offset(1), 1,
+                dict_array->data(1) + index / 8, hashes + ikey);
+      } else {
+        HashFixed(combine_hashes, 1, value_length,
+                  dict_array->data(1) + index * value_length, hashes + ikey);
+      }
+    } else if (dict_array->metadata().fixed_length == sizeof(uint32_t)) {
+      HashVarLen(combine_hashes, 1, dict_array->offsets() + index,
+                 dict_array->data(2), hashes + ikey);
+    } else {
+      HashVarLen(combine_hashes, 1, dict_array->large_offsets() + index,
+                 dict_array->data(2), hashes + ikey);
+    }
   }
-  
 }
 
 void Hashing64::HashMultiColumn(const std::vector<KeyColumnArray>& cols,
@@ -897,7 +913,7 @@ void Hashing64::HashMultiColumn(const std::vector<KeyColumnArray>& cols,
                  cols[icol].data(1) + first_row * index_length,
                  cols[icol].dictionary_array(),
                  hashes + first_row);
-      } if (cols[icol].metadata().is_fixed_length) {
+      } else if (cols[icol].metadata().is_fixed_length) {
         uint64_t key_length = cols[icol].metadata().fixed_length;
         if (key_length == 0) {
           HashBit(icol > 0, cols[icol].bit_offset(1), batch_size_next,

@@ -92,7 +92,7 @@ class ARROW_EXPORT KeyColumnArray {
   KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length,
                  const uint8_t* validity_buffer, const uint8_t* fixed_length_buffer,
                  const uint8_t* var_length_buffer, int bit_offset_validity = 0,
-                 int bit_offset_fixed = 0);
+                 int bit_offset_fixed = 0, const KeyColumnArray* dictionary = NULLPTR);
   /// \brief Create a mutable view from buffers
   ///
   /// This is a view only and does not take ownership of the buffers.  The lifetime
@@ -100,7 +100,7 @@ class ARROW_EXPORT KeyColumnArray {
   KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length,
                  uint8_t* validity_buffer, uint8_t* fixed_length_buffer,
                  uint8_t* var_length_buffer, int bit_offset_validity = 0,
-                 int bit_offset_fixed = 0);
+                 int bit_offset_fixed = 0, const KeyColumnArray* dictionary = NULLPTR);
   /// \brief Create a sliced view of `this`
   ///
   /// The number of rows used in offset must be divisible by 8
@@ -245,7 +245,7 @@ ARROW_EXPORT Result<KeyColumnArray> ColumnArrayFromArrayData(
 /// \see ColumnMetadataFromDataType for details
 ARROW_EXPORT KeyColumnArray ColumnArrayFromArrayDataAndMetadata(
     const std::shared_ptr<ArrayData>& array_data, const KeyColumnMetadata& metadata,
-    int64_t start_row, int64_t num_rows);
+    int64_t start_row, int64_t num_rows, const KeyColumnArray* dictionary_array = NULLPTR);
 
 /// \brief Create KeyColumnMetadata instances from an ExecBatch
 ///

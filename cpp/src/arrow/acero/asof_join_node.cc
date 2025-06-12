@@ -30,7 +30,6 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
-#include <iostream>
 
 #include "arrow/acero/exec_plan.h"
 #include "arrow/acero/options.h"
@@ -410,6 +409,7 @@ class KeyHasher {
       : index_(index),
         indices_(indices),
         metadata_(indices.size()),
+        dictionary_arrays_(indices.size()),
         batch_(NULLPTR),
         hashes_(),
         ctx_(),
@@ -430,6 +430,16 @@ class KeyHasher {
                        4 * kMiniBatchLength * sizeof(uint32_t));
   }
 
+  void SetDictionaryArray(col_index_t col, KeyColumnArray dictionary_array) {
+    // indices_ can contain the same column multiple times
+    for (size_t i = 0; i < indices_.size(); i++) {
+      if (indices_[i] == col) {
+        DCHECK(!dictionary_arrays_[i].has_value());
+        dictionary_arrays_[i] = dictionary_array;
+      }
+    }
+  }
+
   // invalidate cached hashes for batch - required when it changes
   // only this method can be called concurrently with HashesFor
   void Invalidate() { batch_ = NULLPTR; }
@@ -447,8 +457,9 @@ class KeyHasher {
                                 static_cast<int64_t>(kMiniBatchLength));
       for (size_t k = 0; k < indices_.size(); k++) {
         auto array_data = batch->column_data(indices_[k]);
-        column_arrays_[k] =
-            ColumnArrayFromArrayDataAndMetadata(array_data, metadata_[k], i, length);
+        column_arrays_[k] = ColumnArrayFromArrayDataAndMetadata(
+            array_data, metadata_[k], i, length,
+            dictionary_arrays_[k].has_value() ? &dictionary_arrays_[k].value() : NULLPTR);
       }
       // write directly to the cache
       Hashing64::HashMultiColumn(column_arrays_, &ctx_, hashes_.data() + i);
@@ -464,6 +475,7 @@ class KeyHasher {
   size_t index_;
   std::vector<col_index_t> indices_;
   std::vector<KeyColumnMetadata> metadata_;
+  std::vector<std::optional<KeyColumnArray>> dictionary_arrays_;
   std::atomic<const RecordBatch*> batch_;
   std::vector<HashType> hashes_;
   LightContext ctx_;
@@ -738,12 +750,14 @@ class InputState : public util::SerialSequencingQueue::Processor {
                rb->ToString(), DEBUG_MANIP(std::endl));
     for (col_index_t i = 0; i < rb->num_columns(); i++) {
       if (rb->column(i)->type()->id() != Type::DICTIONARY) continue;
-      auto& dictionary = arrow::internal::checked_cast<DictionaryArray&>(*rb->column(i)).dictionary();
+      auto& dictionary =
+          arrow::internal::checked_cast<DictionaryArray&>(*rb->column(i)).dictionary();
       if (!dictionaries_[i]) {
         dictionaries_[i] = dictionary;
+        ARROW_ASSIGN_OR_RAISE(auto metadata, ColumnMetadataFromDataType(dictionary->type()));
+        key_hasher_->SetDictionaryArray(i,ColumnArrayFromArrayDataAndMetadata(
+            dictionary->data(), metadata, 0, dictionary->length()));
       } else if (!dictionaries_[i]->Equals(*dictionary)) {
-        // TODO: I think LHS table could actually use multiple dictionaries, so we
-        // could special-case index_ == 0
         return Status::NotImplemented(
             "Input ", index_, " uses multiple dictionaries for field ",
             rb->schema()->field(i)->name());

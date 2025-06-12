@@ -30,7 +30,7 @@ KeyColumnArray::KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length
                                const uint8_t* validity_buffer,
                                const uint8_t* fixed_length_buffer,
                                const uint8_t* var_length_buffer, int bit_offset_validity,
-                               int bit_offset_fixed) {
+                               int bit_offset_fixed, const KeyColumnArray* dictionary) {
   static_assert(
       std::is_trivial_v<KeyColumnArray> && std::is_standard_layout_v<KeyColumnArray>,
       "This class was intended to be a POD type");
@@ -43,12 +43,13 @@ KeyColumnArray::KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length
       mutable_buffers_[kVariableLengthBuffer] = nullptr;
   bit_offset_[kValidityBuffer] = bit_offset_validity;
   bit_offset_[kFixedLengthBuffer] = bit_offset_fixed;
+  dictionary_ = dictionary;
 }
 
 KeyColumnArray::KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length,
                                uint8_t* validity_buffer, uint8_t* fixed_length_buffer,
                                uint8_t* var_length_buffer, int bit_offset_validity,
-                               int bit_offset_fixed) {
+                               int bit_offset_fixed, const KeyColumnArray* dictionary) {
   metadata_ = metadata;
   length_ = length;
   buffers_[kValidityBuffer] = mutable_buffers_[kValidityBuffer] = validity_buffer;
@@ -58,6 +59,7 @@ KeyColumnArray::KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length
       var_length_buffer;
   bit_offset_[kValidityBuffer] = bit_offset_validity;
   bit_offset_[kFixedLengthBuffer] = bit_offset_fixed;
+  dictionary_ = dictionary;
 }
 
 KeyColumnArray KeyColumnArray::WithBufferFrom(const KeyColumnArray& other,
@@ -82,6 +84,7 @@ KeyColumnArray KeyColumnArray::Slice(int64_t offset, int64_t length) const {
   KeyColumnArray sliced;
   sliced.metadata_ = metadata_;
   sliced.length_ = length;
+  sliced.dictionary_ = dictionary_;
   uint32_t fixed_size = metadata_.fixed_length;
 
   sliced.buffers_[0] =
@@ -158,14 +161,15 @@ Result<KeyColumnArray> ColumnArrayFromArrayData(
 
 KeyColumnArray ColumnArrayFromArrayDataAndMetadata(
     const std::shared_ptr<ArrayData>& array_data, const KeyColumnMetadata& metadata,
-    int64_t start_row, int64_t num_rows) {
+    int64_t start_row, int64_t num_rows, const KeyColumnArray* dictionary_array) {
   KeyColumnArray column_array = KeyColumnArray(
       metadata, array_data->offset + start_row + num_rows,
       array_data->buffers[0] != NULLPTR ? array_data->buffers[0]->data() : nullptr,
       array_data->buffers[1]->data(),
       (array_data->buffers.size() > 2 && array_data->buffers[2] != NULLPTR)
           ? array_data->buffers[2]->data()
-          : nullptr);
+          : nullptr,
+      0, 0, dictionary_array);
   return column_array.Slice(array_data->offset + start_row, num_rows);
 }
 
