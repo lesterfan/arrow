@@ -270,9 +270,6 @@ class UnmaterializedCompositeTable {
 
     const auto& [table_index, column_index] = output_col_to_src[i_col];
 
-    // TODO: Is this the best way to get dictionary? InputStates already keep track of dictionaries
-    // but we would have to add InputState and AsofJoinNode to header file. We would also have to
-    // synchronize access.
     std::shared_ptr<Array> dictionary;
     for (const auto& unmaterialized_slice : slices) {
       const auto& [batch, start, end] = unmaterialized_slice.components[table_index];

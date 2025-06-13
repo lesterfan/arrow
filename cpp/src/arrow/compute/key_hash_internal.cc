@@ -824,6 +824,19 @@ void Hashing64::HashFixed(bool combine_hashes, uint32_t num_keys, uint64_t key_l
 void Hashing64::HashDict(bool combine_hashes, uint32_t num_keys, uint32_t index_length,
                          const uint8_t* indices, const KeyColumnArray* dict_array,
                          uint64_t* hashes) {
+  if (dict_array->metadata().is_null_type) {
+    if (combine_hashes) {
+      for (uint32_t i = 0; i < num_keys; ++i) {
+        hashes[i] = CombineHashesImp(hashes[i], 0ULL);
+      }
+    } else {
+      for (uint32_t i = 0; i < num_keys; ++i) {
+        hashes[i] = 0ULL;
+      }
+    }
+    return;
+  }
+
   for (uint32_t ikey = 0; ikey < num_keys; ikey++) {
     uint64_t index = 0;
     switch (index_length) {
@@ -843,8 +856,19 @@ void Hashing64::HashDict(bool combine_hashes, uint32_t num_keys, uint32_t index_
         ARROW_DCHECK(false);
         break;
     }
+
+    // Check if dictionary contains null at index
+    if (dict_array->data(0) && !bit_util::GetBit(dict_array->data(0), dict_array->bit_offset(0) + index)) {
+      if (combine_hashes) {
+        hashes[ikey] = CombineHashesImp(hashes[ikey], 0ULL);
+      } else {
+        hashes[ikey] = 0ULL;
+      }
+      continue;
+    }
+
     // Hash dict_array[index] and store result in hashes[ikey]
-    // TODO: Handle null values in dictionary
+    // TODO: Check that index is in range [0, dict_array->length())
     if (dict_array->metadata().is_fixed_length) {
       uint64_t value_length = dict_array->metadata().fixed_length;
       if (value_length == 0) {
