@@ -87,6 +87,18 @@ inline D std_index(const T& container, const V& val) {
   return std_find(container, val) - container.begin();
 }
 
+bool CompatibleTypes(const DataType& a, const DataType& b) {
+  const DataType* a_value = static_cast<const DataType*>(&a);
+  if (a.id() == Type::DICTIONARY) {
+    a_value = checked_cast<const DictionaryType&>(a).value_type().get();
+  }
+  const DataType* b_value = static_cast<const DataType*>(&b);
+  if (b.id() == Type::DICTIONARY) {
+    b_value = checked_cast<const DictionaryType&>(b).value_type().get();
+  }
+  return a_value->Equals(*b_value);
+}
+
 typedef uint64_t ByType;
 typedef uint64_t OnType;
 typedef uint64_t HashType;
@@ -396,6 +408,7 @@ class KeyHasher {
       : index_(index),
         indices_(indices),
         metadata_(indices.size()),
+        dictionary_arrays_(indices.size()),
         batch_(NULLPTR),
         hashes_(),
         ctx_(),
@@ -416,6 +429,16 @@ class KeyHasher {
                        4 * kMiniBatchLength * sizeof(uint32_t));
   }
 
+  void SetDictionaryArray(col_index_t col, KeyColumnArray dictionary_array) {
+    // indices_ can contain the same column multiple times
+    for (size_t i = 0; i < indices_.size(); i++) {
+      if (indices_[i] == col) {
+        DCHECK(!dictionary_arrays_[i].has_value());
+        dictionary_arrays_[i] = dictionary_array;
+      }
+    }
+  }
+
   // invalidate cached hashes for batch - required when it changes
   // only this method can be called concurrently with HashesFor
   void Invalidate() { batch_ = NULLPTR; }
@@ -433,8 +456,9 @@ class KeyHasher {
                                 static_cast<int64_t>(kMiniBatchLength));
       for (size_t k = 0; k < indices_.size(); k++) {
         auto array_data = batch->column_data(indices_[k]);
-        column_arrays_[k] =
-            ColumnArrayFromArrayDataAndMetadata(array_data, metadata_[k], i, length);
+        column_arrays_[k] = ColumnArrayFromArrayDataAndMetadata(
+            array_data, metadata_[k], i, length,
+            dictionary_arrays_[k].has_value() ? &dictionary_arrays_[k].value() : NULLPTR);
       }
       // write directly to the cache
       Hashing64::HashMultiColumn(column_arrays_, &ctx_, hashes_.data() + i);
@@ -450,6 +474,7 @@ class KeyHasher {
   size_t index_;
   std::vector<col_index_t> indices_;
   std::vector<KeyColumnMetadata> metadata_;
+  std::vector<std::optional<KeyColumnArray>> dictionary_arrays_;
   std::atomic<const RecordBatch*> batch_;
   std::vector<HashType> hashes_;
   LightContext ctx_;
@@ -489,8 +514,10 @@ class InputState : public util::SerialSequencingQueue::Processor {
         time_col_index_(time_col_index),
         key_col_index_(key_col_index),
         time_type_id_(schema_->fields()[time_col_index_]->type()->id()),
+        time_index_type_id_(Type::NA),
         key_type_id_(key_col_index.size()),
         key_hasher_(key_hasher),
+        dictionaries_(schema->num_fields()),
         node_(node),
         index_(index),
         must_hash_(must_hash),
@@ -499,6 +526,12 @@ class InputState : public util::SerialSequencingQueue::Processor {
         memo_(DEBUG_ADD(/*no_future=*/index == 0 || !tolerance.positive, node, index)) {
     for (size_t k = 0; k < key_col_index_.size(); k++) {
       key_type_id_[k] = schema_->fields()[key_col_index_[k]]->type()->id();
+    }
+    if (time_type_id_ == Type::DICTIONARY) {
+      auto& dict_type =
+          checked_cast<const DictionaryType&>(*schema_->fields()[time_col_index_]->type());
+      time_type_id_ = dict_type.value_type()->id();
+      time_index_type_id_ = dict_type.index_type()->id();
     }
   }
 
@@ -612,9 +645,16 @@ class InputState : public util::SerialSequencingQueue::Processor {
     }
   }
 
+  OnType GetTime(const RecordBatch* batch, int col, uint64_t row) const {
+    if (time_index_type_id_ == Type::NA) {
+      return arrow::acero::GetTime(batch, time_type_id_, col, row);
+    } else {
+      return arrow::acero::GetTimeDict(batch,time_index_type_id_, time_type_id_, col, row);
+    }
+  }
+
   inline OnType GetLatestTime() const {
-    return GetTime(GetLatestBatch().get(), time_type_id_, time_col_index_,
-                   latest_ref_row_);
+    return GetTime(GetLatestBatch().get(), time_col_index_, latest_ref_row_);
   }
 
 #undef LATEST_VAL_CASE
@@ -641,8 +681,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
         have_active_batch &= !queue_.TryPop();
         if (have_active_batch) {
           DCHECK_GT(queue_.Front()->num_rows(), 0);  // empty batches disallowed
-          memo_.UpdateTime(GetTime(queue_.Front().get(), time_type_id_, time_col_index_,
-                                   0));  // time changed
+          memo_.UpdateTime(GetTime(queue_.Front().get(), time_col_index_, 0));  // time changed
         }
       }
     }
@@ -708,6 +747,21 @@ class InputState : public util::SerialSequencingQueue::Processor {
     auto rb = *batch.ToRecordBatch(schema_);
     DEBUG_SYNC(node_, "received batch from input ", index_, ":", DEBUG_MANIP(std::endl),
                rb->ToString(), DEBUG_MANIP(std::endl));
+    for (col_index_t i = 0; i < rb->num_columns(); i++) {
+      if (rb->column(i)->type()->id() != Type::DICTIONARY) continue;
+      auto& dictionary =
+          arrow::internal::checked_cast<DictionaryArray&>(*rb->column(i)).dictionary();
+      if (!dictionaries_[i]) {
+        dictionaries_[i] = dictionary;
+        ARROW_ASSIGN_OR_RAISE(auto metadata, ColumnMetadataFromDataType(dictionary->type()));
+        key_hasher_->SetDictionaryArray(i, ColumnArrayFromArrayDataAndMetadata(
+            dictionary->data(), metadata, 0, dictionary->length()));
+      } else if (!dictionaries_[i]->Equals(*dictionary)) {
+        return Status::NotImplemented(
+            "Input ", index_, " uses multiple dictionaries for field ",
+            rb->schema()->field(i)->name());
+      }
+    }
     return Push(rb);
   }
   void Rehash() {
@@ -786,10 +840,15 @@ class InputState : public util::SerialSequencingQueue::Processor {
   std::vector<col_index_t> key_col_index_;
   // Type id of the time column
   Type::type time_type_id_;
+  // Type id of the time column's index type or Type::NA if the time column
+  // is not a dictionary
+  Type::type time_index_type_id_;
   // Type id of the key column
   std::vector<Type::type> key_type_id_;
   // Hasher for key elements
   mutable KeyHasher* key_hasher_;
+  // Dictionaries for the input columns, if any
+  std::vector<std::shared_ptr<Array>> dictionaries_;
   // Owning node
   AsofJoinNode* node_;
   // Index of this input
@@ -1159,8 +1218,8 @@ class AsofJoinNode : public ExecNode {
     return indices_of_by_key_;
   }
 
-  static Status is_valid_on_field(const std::shared_ptr<Field>& field) {
-    switch (field->type()->id()) {
+  static bool is_valid_on_type(const DataType& type) {
+    switch (type.id()) {
       case Type::INT8:
       case Type::INT16:
       case Type::INT32:
@@ -1174,15 +1233,16 @@ class AsofJoinNode : public ExecNode {
       case Type::TIME32:
       case Type::TIME64:
       case Type::TIMESTAMP:
-        return Status::OK();
+        return true;
+      case Type::DICTIONARY:
+        return is_valid_on_type(*checked_cast<const DictionaryType&>(type).value_type());
       default:
-        return Status::Invalid("Unsupported type for on-key ", field->name(), " : ",
-                               field->type()->ToString());
+        return false;
     }
   }
 
-  static Status is_valid_by_field(const std::shared_ptr<Field>& field) {
-    switch (field->type()->id()) {
+  static bool is_valid_by_type(const DataType& type) {
+    switch (type.id()) {
       case Type::INT8:
       case Type::INT16:
       case Type::INT32:
@@ -1200,15 +1260,16 @@ class AsofJoinNode : public ExecNode {
       case Type::LARGE_STRING:
       case Type::BINARY:
       case Type::LARGE_BINARY:
-        return Status::OK();
+        return true;
+      case Type::DICTIONARY:
+        return is_valid_by_type(*checked_cast<const DictionaryType&>(type).value_type());
       default:
-        return Status::Invalid("Unsupported type for by-key ", field->name(), " : ",
-                               field->type()->ToString());
+        return false;
     }
   }
 
-  static Status is_valid_data_field(const std::shared_ptr<Field>& field) {
-    switch (field->type()->id()) {
+  static bool is_valid_data_type(const DataType& type) {
+    switch (type.id()) {
       case Type::BOOL:
       case Type::INT8:
       case Type::INT16:
@@ -1229,10 +1290,11 @@ class AsofJoinNode : public ExecNode {
       case Type::LARGE_STRING:
       case Type::BINARY:
       case Type::LARGE_BINARY:
-        return Status::OK();
+        return true;
+      case Type::DICTIONARY:
+        return is_valid_data_type(*checked_cast<const DictionaryType&>(type).value_type());
       default:
-        return Status::Invalid("Unsupported type for data field ", field->name(), " : ",
-                               field->type()->ToString());
+        return false;
     }
   }
 
@@ -1267,15 +1329,15 @@ class AsofJoinNode : public ExecNode {
 
       if (on_key_type == NULLPTR) {
         on_key_type = on_field->type().get();
-      } else if (*on_key_type != *on_field->type()) {
-        return Status::Invalid("Expected on-key type ", *on_key_type, " but got ",
-                               *on_field->type(), " for field ", on_field->name(),
+      } else if (!CompatibleTypes(*on_key_type, *on_field->type())) {
+        return Status::Invalid("Incompatible data types for on-key: expected a type compatible with ",
+                               *on_key_type, " but got ", *on_field->type(), " for field ", on_field->name(),
                                " in input ", j);
       }
       for (size_t k = 0; k < n_by; k++) {
         if (by_key_type[k] == NULLPTR) {
           by_key_type[k] = by_field[k]->type().get();
-        } else if (*by_key_type[k] != *by_field[k]->type()) {
+        } else if (!CompatibleTypes(*by_key_type[k], *by_field[k]->type())) {
           return Status::Invalid("Expected by-key type ", *by_key_type[k], " but got ",
                                  *by_field[k]->type(), " for field ", by_field[k]->name(),
                                  " in input ", j);
@@ -1286,15 +1348,24 @@ class AsofJoinNode : public ExecNode {
         const auto field = input_schema[j]->field(i);
         bool as_output;  // true if the field appears as an output
         if (i == on_field_ix) {
-          ARROW_RETURN_NOT_OK(is_valid_on_field(field));
+          if (!is_valid_on_type(*field->type())) {
+            return Status::Invalid("Unsupported type for on-key ", field->name(), " : ",
+                                   field->type()->ToString());
+          }
           // Only add on field from the left table
           as_output = (j == 0);
         } else if (std_has(by_field_ix, i)) {
-          ARROW_RETURN_NOT_OK(is_valid_by_field(field));
+          if (!is_valid_by_type(*field->type())) {
+            return Status::Invalid("Unsupported type for by-key ", field->name(), " : ",
+                                   field->type()->ToString());
+          }
           // Only add by field from the left table
           as_output = (j == 0);
         } else {
-          ARROW_RETURN_NOT_OK(is_valid_data_field(field));
+          if (!is_valid_data_type(*field->type())) {
+            return Status::Invalid("Unsupported type for data field ", field->name(), " : ",
+                                   field->type()->ToString());
+          }
           as_output = true;
         }
         if (as_output) {
@@ -1394,11 +1465,16 @@ class AsofJoinNode : public ExecNode {
     for (size_t i = 0; i < n_input; i++) {
       key_hashers.push_back(std::make_unique<KeyHasher>(i, indices_of_by_key[i]));
     }
-    bool must_hash =
-        n_by > 1 ||
-        (n_by == 1 &&
-         !is_primitive(
-             inputs[0]->output_schema()->field(indices_of_by_key[0][0])->type()->id()));
+    bool must_hash = n_by > 1;
+    if (!must_hash && n_by > 0) {
+      for (size_t i = 0; i < n_input; i++) {
+        col_index_t icol = indices_of_by_key[i][0];
+        if (!is_primitive(inputs[i]->output_schema()->field(icol)->type()->id())) {
+          must_hash = true;
+          break;
+        }
+      }
+    }
     bool may_rehash = n_by == 1 && !must_hash;
     return plan->EmplaceNode<AsofJoinNode>(
         plan, inputs, std::move(input_labels), std::move(indices_of_on_key),

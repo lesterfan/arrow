@@ -92,7 +92,7 @@ class ARROW_EXPORT KeyColumnArray {
   KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length,
                  const uint8_t* validity_buffer, const uint8_t* fixed_length_buffer,
                  const uint8_t* var_length_buffer, int bit_offset_validity = 0,
-                 int bit_offset_fixed = 0);
+                 int bit_offset_fixed = 0, const KeyColumnArray* dictionary = NULLPTR);
   /// \brief Create a mutable view from buffers
   ///
   /// This is a view only and does not take ownership of the buffers.  The lifetime
@@ -100,7 +100,7 @@ class ARROW_EXPORT KeyColumnArray {
   KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length,
                  uint8_t* validity_buffer, uint8_t* fixed_length_buffer,
                  uint8_t* var_length_buffer, int bit_offset_validity = 0,
-                 int bit_offset_fixed = 0);
+                 int bit_offset_fixed = 0, const KeyColumnArray* dictionary = NULLPTR);
   /// \brief Create a sliced view of `this`
   ///
   /// The number of rows used in offset must be divisible by 8
@@ -167,6 +167,8 @@ class ARROW_EXPORT KeyColumnArray {
   const KeyColumnMetadata& metadata() const { return metadata_; }
   /// \brief Return the length (in rows) of the array
   int64_t length() const { return length_; }
+  /// \brief Return the array's dictionary KeyColumnArray
+  const KeyColumnArray* dictionary_array() const { return dictionary_; }
   /// \brief Return the bit offset into the corresponding vector
   ///
   /// if i == 1 then this must be a bool array
@@ -184,6 +186,9 @@ class ARROW_EXPORT KeyColumnArray {
   // Starting bit offset within the first byte (between 0 and 7)
   // to be used when accessing buffers that store bit vectors.
   int bit_offset_[kMaxBuffers - 1];
+  // Non-null if the key column is a dictionary and we want to hash
+  // values instead of indices
+  const KeyColumnArray* dictionary_;
 
   bool is_bool_type() const {
     return metadata_.is_fixed_length && metadata_.fixed_length == 0 &&
@@ -240,7 +245,7 @@ ARROW_EXPORT Result<KeyColumnArray> ColumnArrayFromArrayData(
 /// \see ColumnMetadataFromDataType for details
 ARROW_EXPORT KeyColumnArray ColumnArrayFromArrayDataAndMetadata(
     const std::shared_ptr<ArrayData>& array_data, const KeyColumnMetadata& metadata,
-    int64_t start_row, int64_t num_rows);
+    int64_t start_row, int64_t num_rows, const KeyColumnArray* dictionary_array = NULLPTR);
 
 /// \brief Create KeyColumnMetadata instances from an ExecBatch
 ///
