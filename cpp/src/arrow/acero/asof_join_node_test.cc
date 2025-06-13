@@ -24,6 +24,7 @@
 #include <random>
 #include <string_view>
 #include "arrow/acero/exec_plan.h"
+#include "arrow/array/array_dict.h"
 #include "arrow/testing/future_util.h"
 #ifndef NDEBUG
 #  include <sstream>
@@ -140,7 +141,8 @@ Result<BatchesWithSchema> MakeBatchesFromNumStringNoDict(
 Result<BatchesWithSchema> MakeBatchesFromNumString(
     const std::shared_ptr<Schema>& schema,
     const std::vector<std::string_view>& json_strings,
-    int multiplicity = 1, bool unify_dictionaries = true) {
+    int multiplicity = 1, bool unify_dictionaries = true,
+    const std::unordered_map<int, std::shared_ptr<Array>>& dictionaries = {}) {
   // Create a simple schema with the value type in the place of any dictionary types
   bool has_dict_columns = false;
   FieldVector simple_fields;
@@ -174,6 +176,11 @@ Result<BatchesWithSchema> MakeBatchesFromNumString(
     for (int i = 0; i < schema->num_fields(); i++) {
       if (schema->field(i)->type()->id() != Type::DICTIONARY)
         continue;
+      if (dictionaries.count(i) == 1) {
+        // If a dictionary was provided, use it
+        unified_dictionaries[i] = dictionaries.at(i);
+        continue;
+      }
       auto value_type =
           checked_cast<const DictionaryType&>(*schema->field(i)->type()).value_type();
       std::vector<std::shared_ptr<Array>> column_chunks;
@@ -266,40 +273,6 @@ void BuildZeroDictionaryBaseBinaryArray(std::shared_ptr<Array>& empty, int64_t l
   BuildZeroPrimitiveArray(indices, int32(), length);
   auto dict_type = arrow::dictionary(int32(), dictionary->type());
   ASSERT_OK_AND_ASSIGN(empty, DictionaryArray::FromArrays(dict_type, indices, dictionary));
-}
-
-// TODO: Maybe modify tests to make sure that dictionaries are consistent across
-// chunks so that we can get rid of this function
-Result<std::shared_ptr<Table>> DecodeDictionaryColumns(const Table& table) {
-  std::vector<std::shared_ptr<Field>> new_fields;
-  std::vector<std::shared_ptr<ChunkedArray>> new_columns;
-
-  for (int i = 0; i < table.num_columns(); i++) {
-    const auto& col = table.column(i);
-    const auto& field = table.schema()->field(i);
-
-    if (col->type()->id() == Type::DICTIONARY) {
-      const auto& dict_type =
-          checked_cast<DictionaryType&>(*col->type());
-
-      std::vector<std::shared_ptr<Array>> new_chunks;
-      for (const auto& chunk : col->chunks()) {
-        ARROW_ASSIGN_OR_RAISE(
-            Datum unpacked_chunk,
-            compute::CallFunction("dictionary_decode", {chunk}));
-        new_chunks.push_back(unpacked_chunk.make_array());
-      }
-
-      new_fields.push_back(field->WithType(dict_type.value_type()));
-      new_columns.push_back(std::make_shared<ChunkedArray>(new_chunks, dict_type.value_type()));
-    } else {
-      new_fields.push_back(field);
-      new_columns.push_back(col);
-    }
-  }
-
-  auto new_schema = std::make_shared<Schema>(new_fields);
-  return Table::Make(new_schema, new_columns);
 }
 
 AsofJoinNodeOptions GetRepeatedOptions(size_t repeat, FieldRef on_key,
@@ -689,10 +662,8 @@ struct BasicTest {
                           << res_table.ToString() << std::endl;
           }
 #endif
-          auto decoded_exp_table = DecodeDictionaryColumns(exp_table).ValueOrDie();
-          auto decoded_res_table = DecodeDictionaryColumns(res_table).ValueOrDie();
-          AssertTablesEqual(*decoded_exp_table, *decoded_res_table,
-                            /*same_chunk_layout=*/true, /*flatten=*/true);
+          AssertTablesEqual(exp_table, res_table, /*same_chunk_layout=*/true,
+                            /*flatten=*/true);
         });
   }
 
@@ -881,14 +852,35 @@ struct BasicTest {
     ASSERT_OK_AND_ASSIGN(auto l_batches, MakeBatchesFromNumString(l_schema, l_data));
     ASSERT_OK_AND_ASSIGN(auto r0_batches, MakeBatchesFromNumString(r0_schema, r0_data));
     ASSERT_OK_AND_ASSIGN(auto r1_batches, MakeBatchesFromNumString(r1_schema, r1_data));
-    // TODO: Values in three tables below are a subset of the values in the
-    // tables above, so we can pass dictionaries down
+
+    // If dictionaries are present, use them in expected batches
+    std::unordered_map<int, std::shared_ptr<Array>> dictionaries;
+    if (!l_batches.batches.empty()) {
+      auto& first_batch = l_batches.batches[0];
+      if (b.l_time->id() == Type::DICTIONARY)
+        dictionaries[0] = checked_cast<const DictionaryArray&>(*first_batch.values[0].make_array()).dictionary();
+      if (b.l_key->id() == Type::DICTIONARY)
+        dictionaries[1] = checked_cast<const DictionaryArray&>(*first_batch.values[1].make_array()).dictionary();
+      if (b.l_val->id() == Type::DICTIONARY)
+        dictionaries[2] = checked_cast<const DictionaryArray&>(*first_batch.values[2].make_array()).dictionary();
+    }
+    if (!r0_batches.batches.empty()) {
+      auto& first_batch = r0_batches.batches[0];
+      if (b.r0_val->id() == Type::DICTIONARY)
+        dictionaries[3] = checked_cast<const DictionaryArray&>(*first_batch.values[2].make_array()).dictionary();
+    }
+    if (!r1_batches.batches.empty()) {
+      auto& first_batch = r1_batches.batches[0];
+      if (b.r1_val->id() == Type::DICTIONARY)
+        dictionaries[4] = checked_cast<const DictionaryArray&>(*first_batch.values[2].make_array()).dictionary();
+    }
+
     ASSERT_OK_AND_ASSIGN(auto exp_nokey_batches,
-                         MakeBatchesFromNumString(exp_schema, exp_nokey_data));
+                         MakeBatchesFromNumString(exp_schema, exp_nokey_data, 1, true, dictionaries));
     ASSERT_OK_AND_ASSIGN(auto exp_emptykey_batches,
-                         MakeBatchesFromNumString(exp_schema, exp_emptykey_data));
+                         MakeBatchesFromNumString(exp_schema, exp_emptykey_data, 1, true, dictionaries));
     ASSERT_OK_AND_ASSIGN(auto exp_batches,
-                         MakeBatchesFromNumString(exp_schema, exp_data));
+                         MakeBatchesFromNumString(exp_schema, exp_data, 1, true, dictionaries));
     batches_runner(l_batches, r0_batches, r1_batches, exp_nokey_batches,
                    exp_emptykey_batches, exp_batches);
   }
