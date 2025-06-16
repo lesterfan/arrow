@@ -151,10 +151,23 @@ TEST(TestBooleanKernel, KleeneOr) {
   CheckBooleanScalarArrayBinary("or_kleene", left);
 }
 
-TEST(TestBooleanKernel, ChunkedAnd) {
+TEST(TestBooleanKernel, ChunkedAndOffset1) {
   auto true_true = ArrayFromJSON(boolean(), "[true, true]");
   auto false_true = std::make_shared<ChunkedArray>(ArrayVector{
       ArrayFromJSON(boolean(), "[false]"), true_true->Slice(1)});
+  auto expected = std::make_shared<ChunkedArray>(
+      ArrayVector{ArrayFromJSON(boolean(), "[false, true]")});
+
+  ASSERT_OK_AND_ASSIGN(Datum actual, CallFunction("and", {true_true, false_true}));
+  ValidateOutput(actual);
+  AssertDatumsEqual(expected, actual, /*verbose=*/true);
+}
+
+TEST(TestBooleanKernel, ChunkedAndOffset2) {
+  auto true_true = ArrayFromJSON(boolean(), "[true, true]");
+  auto true_true_true = ArrayFromJSON(boolean(), "[true, true, true]");
+  auto false_true = std::make_shared<ChunkedArray>(ArrayVector{
+      ArrayFromJSON(boolean(), "[false]"), true_true_true->Slice(2)});
   auto expected = std::make_shared<ChunkedArray>(
       ArrayVector{ArrayFromJSON(boolean(), "[false, true]")});
 
