@@ -86,7 +86,6 @@ uint64_t GetTimeDict(
       DCHECK(false);  // cannot happen
   }
 
-  // TODO: handle nulls?
 #define VALUE_CASE(id)                                            \
   case Type::id: {                                                \
     using T = typename TypeIdTraits<Type::id>::Type;              \
