@@ -56,8 +56,65 @@ uint64_t GetTime(const RecordBatch* batch, Type::type time_type, int col, uint64
       DCHECK(false);
       return 0;  // cannot happen
   }
+}
 
 #undef LATEST_VAL_CASE
+
+uint64_t GetTimeDict(
+    const RecordBatch* batch, Type::type index_type,
+    Type::type value_type, int col, uint64_t row) {
+#define INDEX_CASE(id)                               \
+  case Type::id: {                                   \
+    using T = typename TypeIdTraits<Type::id>::Type; \
+    using CType = typename TypeTraits<T>::CType;     \
+    index = indices->GetValues<CType>(1)[row];       \
+    break;                                           \
+  }
+
+  uint64_t index = 0;
+  auto indices = batch->column_data(col);
+  switch (index_type) {
+    INDEX_CASE(INT8)
+    INDEX_CASE(INT16)
+    INDEX_CASE(INT32)
+    INDEX_CASE(INT64)
+    INDEX_CASE(UINT8)
+    INDEX_CASE(UINT16)
+    INDEX_CASE(UINT32)
+    INDEX_CASE(UINT64)
+    default:
+      DCHECK(false);  // cannot happen
+  }
+
+#define VALUE_CASE(id)                                            \
+  case Type::id: {                                                \
+    using T = typename TypeIdTraits<Type::id>::Type;              \
+    using CType = typename TypeTraits<T>::CType;                  \
+    return NormalizeTime(dictionary->GetValues<CType>(1)[index]); \
+  }
+
+  auto dictionary = batch->column_data(col)->dictionary;
+  switch (value_type) {
+    VALUE_CASE(INT8)
+    VALUE_CASE(INT16)
+    VALUE_CASE(INT32)
+    VALUE_CASE(INT64)
+    VALUE_CASE(UINT8)
+    VALUE_CASE(UINT16)
+    VALUE_CASE(UINT32)
+    VALUE_CASE(UINT64)
+    VALUE_CASE(DATE32)
+    VALUE_CASE(DATE64)
+    VALUE_CASE(TIME32)
+    VALUE_CASE(TIME64)
+    VALUE_CASE(TIMESTAMP)
+    default:
+      DCHECK(false);
+      return 0;  // cannot happen
+  }
+
+#undef INDEX_CASE
+#undef VALUE_CASE
 }
 
 }  // namespace arrow::acero
