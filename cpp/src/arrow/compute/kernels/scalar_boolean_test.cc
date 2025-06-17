@@ -51,6 +51,27 @@ void CheckBooleanScalarArrayBinary(std::string func_name, Datum array) {
   }
 }
 
+template <template <typename> class BitOp>
+void CheckChunkedOffsets(std::string func_name, std::shared_ptr<Array> trues, std::shared_ptr<Array> falses) {
+  BitOp<bool> op;
+
+  for (int64_t left_offset = 0; left_offset < 8; left_offset++) {
+    for (int64_t right_offset = 0; right_offset < 8; right_offset++) {
+      for (int64_t length = std::max(left_offset, right_offset) + 1; length <= 24; length++) {
+        auto left = std::make_shared<ChunkedArray>(
+            ArrayVector{falses->Slice(0, left_offset),
+                        trues->Slice(left_offset, length - left_offset)});
+        auto right = trues->Slice(right_offset, length);
+        ASSERT_OK_AND_ASSIGN(Datum result, CallFunction(func_name, {left, right}));
+        for (int64_t i = 0; i < length; i++) {
+          BooleanScalar expected(op(i >= left_offset, true));
+          ASSERT_TRUE(result.chunked_array()->GetScalar(i).ValueOrDie()->Equals(expected));
+        }
+      }
+    }
+  }
+}
+
 TEST(TestBooleanKernel, Invert) {
   auto arr =
       ArrayFromJSON(boolean(), "[true, false, true, null, false, true, false, null]");
@@ -151,29 +172,17 @@ TEST(TestBooleanKernel, KleeneOr) {
   CheckBooleanScalarArrayBinary("or_kleene", left);
 }
 
-TEST(TestBooleanKernel, ChunkedAndOffset1) {
-  auto true_true = ArrayFromJSON(boolean(), "[true, true]");
-  auto false_true = std::make_shared<ChunkedArray>(ArrayVector{
-      ArrayFromJSON(boolean(), "[false]"), true_true->Slice(1)});
-  auto expected = std::make_shared<ChunkedArray>(
-      ArrayVector{ArrayFromJSON(boolean(), "[false, true]")});
+TEST(TestBooleanKernel, ChunkedOffsets) {
+  BooleanBuilder builder;
+  std::shared_ptr<Array> trues, falses;
+  ASSERT_OK(builder.AppendValues(std::vector<bool>(32, true)));
+  ASSERT_OK(builder.Finish(&trues));
+  ASSERT_OK(builder.AppendValues(std::vector<bool>(32, false)));
+  ASSERT_OK(builder.Finish(&falses));
 
-  ASSERT_OK_AND_ASSIGN(Datum actual, CallFunction("and", {true_true, false_true}));
-  ValidateOutput(actual);
-  AssertDatumsEqual(expected, actual, /*verbose=*/true);
-}
-
-TEST(TestBooleanKernel, ChunkedAndOffset2) {
-  auto true_true = ArrayFromJSON(boolean(), "[true, true]");
-  auto true_true_true = ArrayFromJSON(boolean(), "[true, true, true]");
-  auto false_true = std::make_shared<ChunkedArray>(ArrayVector{
-      ArrayFromJSON(boolean(), "[false]"), true_true_true->Slice(2)});
-  auto expected = std::make_shared<ChunkedArray>(
-      ArrayVector{ArrayFromJSON(boolean(), "[false, true]")});
-
-  ASSERT_OK_AND_ASSIGN(Datum actual, CallFunction("and", {true_true, false_true}));
-  ValidateOutput(actual);
-  AssertDatumsEqual(expected, actual, /*verbose=*/true);
+  CheckChunkedOffsets<std::bit_and>("and", trues, falses);
+  CheckChunkedOffsets<std::bit_or>("or", trues, falses);
+  CheckChunkedOffsets<std::bit_xor>("xor", trues, falses);
 }
 
 }  // namespace compute
