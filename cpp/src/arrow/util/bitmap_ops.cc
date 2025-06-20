@@ -328,12 +328,6 @@ bool OptionalBitmapEquals(const std::shared_ptr<Buffer>& left, int64_t left_offs
 
 namespace {
 
-// For every bit in the mask that is set, the corresponding bit from 'new_byte' is taken.
-// For every bit in the mask that is not set, the corresponding bit from 'old_val' is taken.
-uint8_t merge(uint8_t old_byte, uint8_t new_byte, uint8_t mask) {
-  return (old_byte & ~mask) | (new_byte & mask);
-}
-
 template <template <typename> class BitOp>
 void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* right,
                      int64_t right_offset, uint8_t* out, int64_t out_offset,
@@ -342,39 +336,61 @@ void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* ri
   DCHECK_EQ(left_offset % 8, right_offset % 8);
   DCHECK_EQ(left_offset % 8, out_offset % 8);
 
-  const int64_t nbytes = bit_util::CoveringBytes(left_offset, length);
-  const int64_t start_bit = left_offset % 8;
+  int64_t nbytes = bit_util::CoveringBytes(left_offset, length);
+  if (nbytes == 0)
+    return;
+
+  int64_t offset = left_offset % 8;
   left += left_offset / 8;
   right += right_offset / 8;
   out += out_offset / 8;
 
-  // Handle case where range is contained in a single byte
-  if (nbytes == 0) {
-    return;
-  } else if (nbytes == 1) {
-    uint64_t bits = bit_util::TrailingBits(0xff, static_cast<int>(length));
-    uint8_t mask = static_cast<uint8_t>(bits << start_bit);
-    out[0] = merge(out[0], op(left[0], right[0]), mask);
-    return;
+  {
+    // Handle the first byte
+    uint64_t bits_in_first_byte = std::min(length, offset == 0 ? 8 : 8 - offset);
+    uint8_t first_byte_out = op(left[0], right[0]);
+
+    // Write to the last `bits_in_first_byte` bits to the first byte of `out`
+    internal::BitmapWriter first_byte_writer(out, offset, bits_in_first_byte);
+    for (uint64_t i = 0; i < bits_in_first_byte; i++) {
+      if (bit_util::GetBitFromByte(first_byte_out, offset + i)) {
+        first_byte_writer.Set();
+      } else {
+        first_byte_writer.Clear();
+      }
+      first_byte_writer.Next();
+    }
+    first_byte_writer.Finish();
   }
 
-  // Handle the first byte separately, as it may not be fully covered
-  uint8_t first_byte_mask = 0xff << start_bit;
-  out[0] |= op(left[0], right[0]) & first_byte_mask;
+  // If there is only one byte, we are done
+  if (nbytes == 1)
+    return;
 
-  // Handle middle bytes (all fully covered)
+  // Handle middle bytes
   for (int64_t i = 1; i < nbytes - 1; ++i) {
     out[i] = op(left[i], right[i]);
   }
 
-  // Handle the last byte
-  int bits_in_last_byte = (start_bit + length) % 8;
-  if (bits_in_last_byte == 0) {
-    bits_in_last_byte = 8;
+  {
+    // Handle the last byte
+    uint64_t last_offset = (offset + length) % 8;
+    uint64_t bits_in_last_byte = last_offset == 0 ? 8 : last_offset;
+    uint64_t last_byte_offset = 8 * (nbytes - 1);
+    uint8_t last_byte_out = op(left[nbytes - 1], right[nbytes - 1]);
+
+    // Write to the first `bits_in_last_byte` bits to the last byte of `out`
+    internal::BitmapWriter last_byte_writer(out, last_byte_offset, bits_in_last_byte);
+    for (uint64_t i = 0; i < bits_in_last_byte; i++) {
+      if (bit_util::GetBitFromByte(last_byte_out, i)) {
+        last_byte_writer.Set();
+      } else {
+        last_byte_writer.Clear();
+      }
+      last_byte_writer.Next();
+    }
+    last_byte_writer.Finish();
   }
-  uint8_t last_byte_mask = static_cast<uint8_t>(bit_util::TrailingBits(0xff, bits_in_last_byte));
-  out[nbytes - 1] = merge(
-    out[nbytes - 1], op(left[nbytes - 1], right[nbytes - 1]), last_byte_mask);
 }
 
 template <template <typename> class BitOp>
