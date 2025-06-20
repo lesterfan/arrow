@@ -51,6 +51,30 @@ void CheckBooleanScalarArrayBinary(std::string func_name, Datum array) {
   }
 }
 
+template <template <typename> class BitOp>
+void CheckChunkedOffsets(const std::string& func_name,
+    const std::shared_ptr<Array>& a, const std::shared_ptr<Array>& b) {
+  BitOp<bool> op;
+
+  for (int64_t left_offset = 0; left_offset < 8; left_offset++) {
+    for (int64_t right_offset = 0; right_offset < 8; right_offset++) {
+      for (int64_t length = std::max(left_offset, right_offset) + 1; length <= 24; length++) {
+        auto left = std::make_shared<ChunkedArray>(
+            ArrayVector{a->Slice(0, left_offset),
+                        b->Slice(left_offset, length - left_offset)});
+        auto right = a->Slice(right_offset, length);
+        ASSERT_OK_AND_ASSIGN(Datum result, CallFunction(func_name, {left, right}));
+        for (int64_t i = 0; i < length; i++) {
+          BooleanScalar l = checked_cast<BooleanScalar&>(*left->GetScalar(i).ValueOrDie());
+          BooleanScalar r = checked_cast<BooleanScalar&>(*right->GetScalar(i).ValueOrDie());
+          BooleanScalar expected(op(l.value, r.value));
+          ASSERT_TRUE(result.chunked_array()->GetScalar(i).ValueOrDie()->Equals(expected));
+        }
+      }
+    }
+  }
+}
+
 TEST(TestBooleanKernel, Invert) {
   auto arr =
       ArrayFromJSON(boolean(), "[true, false, true, null, false, true, false, null]");
@@ -149,6 +173,23 @@ TEST(TestBooleanKernel, KleeneOr) {
   expected = ArrayFromJSON(boolean(), "[true, true,  false, true]");
   CheckScalarBinary("or_kleene", left, right, expected);
   CheckBooleanScalarArrayBinary("or_kleene", left);
+}
+
+TEST(TestBooleanKernel, ChunkedOffsets) {
+  BooleanBuilder builder;
+  std::shared_ptr<Array> trues, falses;
+  ASSERT_OK(builder.AppendValues(std::vector<bool>(32, true)));
+  ASSERT_OK(builder.Finish(&trues));
+  ASSERT_OK(builder.AppendValues(std::vector<bool>(32, false)));
+  ASSERT_OK(builder.Finish(&falses));
+
+  for (const auto& a : {trues, falses}) {
+    for (const auto& b : {trues, falses}) {
+      CheckChunkedOffsets<std::bit_and>("and", a, b);
+      CheckChunkedOffsets<std::bit_or>("or", a, b);
+      CheckChunkedOffsets<std::bit_xor>("xor", a, b);
+    }
+  }
 }
 
 }  // namespace compute

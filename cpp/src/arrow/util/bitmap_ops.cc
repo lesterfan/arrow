@@ -336,12 +336,60 @@ void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* ri
   DCHECK_EQ(left_offset % 8, right_offset % 8);
   DCHECK_EQ(left_offset % 8, out_offset % 8);
 
-  const int64_t nbytes = bit_util::BytesForBits(length + left_offset % 8);
+  int64_t nbytes = bit_util::CoveringBytes(left_offset, length);
+  if (nbytes == 0)
+    return;
+
+  int64_t offset = left_offset % 8;
   left += left_offset / 8;
   right += right_offset / 8;
   out += out_offset / 8;
-  for (int64_t i = 0; i < nbytes; ++i) {
+
+  {
+    // Handle the first byte
+    uint64_t bits_in_first_byte = std::min(length, offset == 0 ? 8 : 8 - offset);
+    uint8_t first_byte_out = op(left[0], right[0]);
+
+    // Write to the last `bits_in_first_byte` bits to the first byte of `out`
+    internal::BitmapWriter first_byte_writer(out, offset, bits_in_first_byte);
+    for (uint64_t i = 0; i < bits_in_first_byte; i++) {
+      if (bit_util::GetBitFromByte(first_byte_out, offset + i)) {
+        first_byte_writer.Set();
+      } else {
+        first_byte_writer.Clear();
+      }
+      first_byte_writer.Next();
+    }
+    first_byte_writer.Finish();
+  }
+
+  // If there is only one byte, we are done
+  if (nbytes == 1)
+    return;
+
+  // Handle middle bytes
+  for (int64_t i = 1; i < nbytes - 1; ++i) {
     out[i] = op(left[i], right[i]);
+  }
+
+  {
+    // Handle the last byte
+    uint64_t last_offset = (offset + length) % 8;
+    uint64_t bits_in_last_byte = last_offset == 0 ? 8 : last_offset;
+    uint64_t last_byte_offset = 8 * (nbytes - 1);
+    uint8_t last_byte_out = op(left[nbytes - 1], right[nbytes - 1]);
+
+    // Write to the first `bits_in_last_byte` bits to the last byte of `out`
+    internal::BitmapWriter last_byte_writer(out, last_byte_offset, bits_in_last_byte);
+    for (uint64_t i = 0; i < bits_in_last_byte; i++) {
+      if (bit_util::GetBitFromByte(last_byte_out, i)) {
+        last_byte_writer.Set();
+      } else {
+        last_byte_writer.Clear();
+      }
+      last_byte_writer.Next();
+    }
+    last_byte_writer.Finish();
   }
 }
 
