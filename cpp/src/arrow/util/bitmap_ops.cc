@@ -350,7 +350,7 @@ void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* ri
     uint64_t bits_in_first_byte = std::min(length, offset == 0 ? 8 : 8 - offset);
     uint8_t first_byte_out = op(left[0], right[0]);
 
-    // Write to the last `bits_in_first_byte` bits to the first byte of `out`
+    // Write to the last `bits_in_first_byte` bits of the first byte of `out`
     internal::BitmapWriter first_byte_writer(out, offset, bits_in_first_byte);
     for (uint64_t i = 0; i < bits_in_first_byte; i++) {
       if (bit_util::GetBitFromByte(first_byte_out, offset + i)) {
@@ -379,7 +379,7 @@ void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* ri
     uint64_t last_byte_offset = 8 * (nbytes - 1);
     uint8_t last_byte_out = op(left[nbytes - 1], right[nbytes - 1]);
 
-    // Write to the first `bits_in_last_byte` bits to the last byte of `out`
+    // Write to the first `bits_in_last_byte` bits of the last byte of `out`
     internal::BitmapWriter last_byte_writer(out, last_byte_offset, bits_in_last_byte);
     for (uint64_t i = 0; i < bits_in_last_byte; i++) {
       if (bit_util::GetBitFromByte(last_byte_out, i)) {
