@@ -337,8 +337,9 @@ void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* ri
   DCHECK_EQ(left_offset % 8, out_offset % 8);
 
   int64_t nbytes = bit_util::CoveringBytes(left_offset, length);
-  if (nbytes == 0)
+  if (nbytes == 0) {
     return;
+  }
 
   int64_t offset = left_offset % 8;
   left += left_offset / 8;
@@ -364,8 +365,9 @@ void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* ri
   }
 
   // If there is only one byte, we are done
-  if (nbytes == 1)
+  if (nbytes == 1) {
     return;
+  }
 
   // Handle middle bytes
   for (int64_t i = 1; i < nbytes - 1; ++i) {
