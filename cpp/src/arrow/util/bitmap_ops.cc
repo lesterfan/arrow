@@ -328,6 +328,22 @@ bool OptionalBitmapEquals(const std::shared_ptr<Buffer>& left, int64_t left_offs
 
 namespace {
 
+// Writes `bit_count` bits of `byte` (starting a `offset`) to
+// `out` (starting at `offset`). `offset` measures the distance
+// in bits from the least significant bit.
+void WritePartialByte(uint8_t* out, int64_t offset, uint8_t byte, int64_t bit_count) {
+  internal::BitmapWriter writer(out, offset, bit_count);
+  for (int64_t i = 0; i < bit_count; i++) {
+    if (bit_util::GetBitFromByte(byte, offset + i)) {
+      writer.Set();
+    } else {
+      writer.Clear();
+    }
+    writer.Next();
+  }
+  writer.Finish();
+}
+
 template <template <typename> class BitOp>
 void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* right,
                      int64_t right_offset, uint8_t* out, int64_t out_offset,
@@ -346,23 +362,10 @@ void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* ri
   right += right_offset / 8;
   out += out_offset / 8;
 
-  {
-    // Handle the first byte
-    uint64_t bits_in_first_byte = std::min(length, offset == 0 ? 8 : 8 - offset);
-    uint8_t first_byte_out = op(left[0], right[0]);
-
-    // Write to the last `bits_in_first_byte` bits of the first byte of `out`
-    internal::BitmapWriter first_byte_writer(out, offset, bits_in_first_byte);
-    for (uint64_t i = 0; i < bits_in_first_byte; i++) {
-      if (bit_util::GetBitFromByte(first_byte_out, offset + i)) {
-        first_byte_writer.Set();
-      } else {
-        first_byte_writer.Clear();
-      }
-      first_byte_writer.Next();
-    }
-    first_byte_writer.Finish();
-  }
+  // Handle the first byte
+  int64_t bits_in_first_byte = std::min(length, offset == 0 ? 8 : 8 - offset);
+  uint8_t first_byte_out = op(left[0], right[0]);
+  WritePartialByte(out, offset, first_byte_out, bits_in_first_byte);
 
   // If there is only one byte, we are done
   if (nbytes == 1) {
@@ -374,25 +377,11 @@ void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* ri
     out[i] = op(left[i], right[i]);
   }
 
-  {
-    // Handle the last byte
-    uint64_t last_offset = (offset + length) % 8;
-    uint64_t bits_in_last_byte = last_offset == 0 ? 8 : last_offset;
-    uint64_t last_byte_offset = 8 * (nbytes - 1);
-    uint8_t last_byte_out = op(left[nbytes - 1], right[nbytes - 1]);
-
-    // Write to the first `bits_in_last_byte` bits of the last byte of `out`
-    internal::BitmapWriter last_byte_writer(out, last_byte_offset, bits_in_last_byte);
-    for (uint64_t i = 0; i < bits_in_last_byte; i++) {
-      if (bit_util::GetBitFromByte(last_byte_out, i)) {
-        last_byte_writer.Set();
-      } else {
-        last_byte_writer.Clear();
-      }
-      last_byte_writer.Next();
-    }
-    last_byte_writer.Finish();
-  }
+  // Handle the last byte
+  uint64_t end_offset = (offset + length) % 8;
+  uint64_t bits_in_last_byte = end_offset == 0 ? 8 : end_offset;
+  uint8_t last_byte_out = op(left[nbytes - 1], right[nbytes - 1]);
+  WritePartialByte(&out[nbytes - 1], 0, last_byte_out, bits_in_last_byte);
 }
 
 template <template <typename> class BitOp>
