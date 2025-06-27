@@ -743,25 +743,40 @@ class InputState : public util::SerialSequencingQueue::Processor {
     return sequencer_->InsertBatch(std::move(batch));
   }
 
-  Status Process(ExecBatch batch) override {
-    auto rb = *batch.ToRecordBatch(schema_);
-    DEBUG_SYNC(node_, "received batch from input ", index_, ":", DEBUG_MANIP(std::endl),
-               rb->ToString(), DEBUG_MANIP(std::endl));
+  Status ProcessDictionaries(const std::shared_ptr<arrow::RecordBatch>& rb) {
     for (col_index_t i = 0; i < rb->num_columns(); i++) {
-      if (rb->column(i)->type()->id() != Type::DICTIONARY) continue;
+      if (rb->column(i)->type()->id() != Type::DICTIONARY) {
+        continue;
+      }
       auto& dictionary =
           arrow::internal::checked_cast<DictionaryArray&>(*rb->column(i)).dictionary();
       if (!dictionaries_[i]) {
+        // If we have not yet seen a dictionary for this column, store the dictionary
+        // in `dictionaries_`
         dictionaries_[i] = dictionary;
+        // We also make a `KeyColumnArray` from the dictionary and pass it to the key hasher
         ARROW_ASSIGN_OR_RAISE(auto metadata, ColumnMetadataFromDataType(dictionary->type()));
         key_hasher_->SetDictionaryArray(i, ColumnArrayFromArrayDataAndMetadata(
             dictionary->data(), metadata, 0, dictionary->length()));
       } else if (!dictionaries_[i]->Equals(*dictionary)) {
+        // If we have seen a dictionary for this column but it's different from the
+        // current one, error out. We could remove this restriction in the future, but it
+        // would mean potentially slicing up the output a bunch based on which rows point
+        // to which dictionaries. The hash join also requires that each column has the
+        // same dictionary across batches, so this feels like a reasonable restriction.
         return Status::NotImplemented(
             "Input ", index_, " uses multiple dictionaries for field ",
             rb->schema()->field(i)->name());
       }
     }
+    return Status::OK();
+  }
+
+  Status Process(ExecBatch batch) override {
+    auto rb = *batch.ToRecordBatch(schema_);
+    DEBUG_SYNC(node_, "received batch from input ", index_, ":", DEBUG_MANIP(std::endl),
+               rb->ToString(), DEBUG_MANIP(std::endl));
+    ARROW_RETURN_NOT_OK(ProcessDictionaries(rb));
     return Push(rb);
   }
   void Rehash() {
