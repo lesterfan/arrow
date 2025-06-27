@@ -868,7 +868,10 @@ class InputState : public util::SerialSequencingQueue::Processor {
   std::vector<Type::type> key_type_id_;
   // Hasher for key elements
   mutable KeyHasher* key_hasher_;
-  // Dictionaries for the input columns, if any
+  // A mapping from column index to dictionary. If we have not yet seen
+  // a dictionary for column i, dictionaries_[i] contains nullptr. We need
+  // to keep track of dictionaries to ensure that each column uses the same
+  // dictionary for each batch (see the comment in ProcessDictionaries).
   std::vector<std::shared_ptr<Array>> dictionaries_;
   // Owning node
   AsofJoinNode* node_;
