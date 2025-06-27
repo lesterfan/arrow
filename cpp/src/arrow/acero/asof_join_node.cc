@@ -87,7 +87,13 @@ inline D std_index(const T& container, const V& val) {
   return std_find(container, val) - container.begin();
 }
 
-bool CompatibleTypes(const DataType& a, const DataType& b) {
+// Two types are compatible if their underlying value types are equal.
+// For example, the following types are all compatible since their
+// underlying types are all string:
+// - string
+// - dictionary<values=string, indices=int32>
+// - dictionary<values=string, indices=int8>
+bool AreCompatibleTypes(const DataType& a, const DataType& b) {
   const DataType* a_value = static_cast<const DataType*>(&a);
   if (a.id() == Type::DICTIONARY) {
     a_value = checked_cast<const DictionaryType&>(a).value_type().get();
@@ -1344,7 +1350,7 @@ class AsofJoinNode : public ExecNode {
 
       if (on_key_type == NULLPTR) {
         on_key_type = on_field->type().get();
-      } else if (!CompatibleTypes(*on_key_type, *on_field->type())) {
+      } else if (!AreCompatibleTypes(*on_key_type, *on_field->type())) {
         return Status::Invalid("Incompatible data types for on-key: expected a type compatible with ",
                                *on_key_type, " but got ", *on_field->type(), " for field ", on_field->name(),
                                " in input ", j);
@@ -1352,7 +1358,7 @@ class AsofJoinNode : public ExecNode {
       for (size_t k = 0; k < n_by; k++) {
         if (by_key_type[k] == NULLPTR) {
           by_key_type[k] = by_field[k]->type().get();
-        } else if (!CompatibleTypes(*by_key_type[k], *by_field[k]->type())) {
+        } else if (!AreCompatibleTypes(*by_key_type[k], *by_field[k]->type())) {
           return Status::Invalid("Expected by-key type ", *by_key_type[k], " but got ",
                                  *by_field[k]->type(), " for field ", by_field[k]->name(),
                                  " in input ", j);
