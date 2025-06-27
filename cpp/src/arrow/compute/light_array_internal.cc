@@ -30,7 +30,7 @@ KeyColumnArray::KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length
                                const uint8_t* validity_buffer,
                                const uint8_t* fixed_length_buffer,
                                const uint8_t* var_length_buffer, int bit_offset_validity,
-                               int bit_offset_fixed, const KeyColumnArray* dictionary) {
+                               int bit_offset_fixed, const KeyColumnArray* dictionary_array) {
   static_assert(
       std::is_trivial_v<KeyColumnArray> && std::is_standard_layout_v<KeyColumnArray>,
       "This class was intended to be a POD type");
@@ -43,13 +43,13 @@ KeyColumnArray::KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length
       mutable_buffers_[kVariableLengthBuffer] = nullptr;
   bit_offset_[kValidityBuffer] = bit_offset_validity;
   bit_offset_[kFixedLengthBuffer] = bit_offset_fixed;
-  dictionary_ = dictionary;
+  dictionary_array_ = dictionary_array;
 }
 
 KeyColumnArray::KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length,
                                uint8_t* validity_buffer, uint8_t* fixed_length_buffer,
                                uint8_t* var_length_buffer, int bit_offset_validity,
-                               int bit_offset_fixed, const KeyColumnArray* dictionary) {
+                               int bit_offset_fixed, const KeyColumnArray* dictionary_array) {
   metadata_ = metadata;
   length_ = length;
   buffers_[kValidityBuffer] = mutable_buffers_[kValidityBuffer] = validity_buffer;
@@ -59,7 +59,7 @@ KeyColumnArray::KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length
       var_length_buffer;
   bit_offset_[kValidityBuffer] = bit_offset_validity;
   bit_offset_[kFixedLengthBuffer] = bit_offset_fixed;
-  dictionary_ = dictionary;
+  dictionary_array_ = dictionary_array;
 }
 
 KeyColumnArray KeyColumnArray::WithBufferFrom(const KeyColumnArray& other,

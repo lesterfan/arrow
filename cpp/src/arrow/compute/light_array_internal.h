@@ -88,19 +88,25 @@ class ARROW_EXPORT KeyColumnArray {
   /// \brief Create a read-only view from buffers
   ///
   /// This is a view only and does not take ownership of the buffers.  The lifetime
-  /// of the buffers must exceed the lifetime of this view
+  /// of the buffers must exceed the lifetime of this view.
+  ///
+  /// For dictionary-encoded arrays, you can provide a `dictionary_array` view
+  /// to hash the dictionary's values instead of its indices.
   KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length,
                  const uint8_t* validity_buffer, const uint8_t* fixed_length_buffer,
                  const uint8_t* var_length_buffer, int bit_offset_validity = 0,
-                 int bit_offset_fixed = 0, const KeyColumnArray* dictionary = NULLPTR);
+                 int bit_offset_fixed = 0, const KeyColumnArray* dictionary_array = NULLPTR);
   /// \brief Create a mutable view from buffers
   ///
   /// This is a view only and does not take ownership of the buffers.  The lifetime
-  /// of the buffers must exceed the lifetime of this view
+  /// of the buffers must exceed the lifetime of this view.
+  ///
+  /// For dictionary-encoded arrays, you can provide a `dictionary_array` view
+  /// to hash the dictionary's values instead of its indices.
   KeyColumnArray(const KeyColumnMetadata& metadata, int64_t length,
                  uint8_t* validity_buffer, uint8_t* fixed_length_buffer,
                  uint8_t* var_length_buffer, int bit_offset_validity = 0,
-                 int bit_offset_fixed = 0, const KeyColumnArray* dictionary = NULLPTR);
+                 int bit_offset_fixed = 0, const KeyColumnArray* dictionary_array = NULLPTR);
   /// \brief Create a sliced view of `this`
   ///
   /// The number of rows used in offset must be divisible by 8
@@ -168,7 +174,7 @@ class ARROW_EXPORT KeyColumnArray {
   /// \brief Return the length (in rows) of the array
   int64_t length() const { return length_; }
   /// \brief Return the array's dictionary KeyColumnArray
-  const KeyColumnArray* dictionary_array() const { return dictionary_; }
+  const KeyColumnArray* dictionary_array() const { return dictionary_array_; }
   /// \brief Return the bit offset into the corresponding vector
   ///
   /// if i == 1 then this must be a bool array
@@ -188,7 +194,7 @@ class ARROW_EXPORT KeyColumnArray {
   int bit_offset_[kMaxBuffers - 1];
   // Non-null if the key column is a dictionary and we want to hash
   // values instead of indices
-  const KeyColumnArray* dictionary_;
+  const KeyColumnArray* dictionary_array_;
 
   bool is_bool_type() const {
     return metadata_.is_fixed_length && metadata_.fixed_length == 0 &&
