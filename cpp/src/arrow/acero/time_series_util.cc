@@ -56,9 +56,9 @@ uint64_t GetTime(const RecordBatch* batch, Type::type time_type, int col, uint64
       DCHECK(false);
       return 0;  // cannot happen
   }
-}
 
 #undef LATEST_VAL_CASE
+}
 
 uint64_t GetTimeDict(
     const RecordBatch* batch, Type::type index_type,
