@@ -593,8 +593,7 @@ struct BasicTest {
             const std::vector<std::string_view>& r1_data,
             const std::vector<std::string_view>& exp_nokey_data,
             const std::vector<std::string_view>& exp_emptykey_data,
-            const std::vector<std::string_view>& exp_data,
-            int64_t tolerance, bool dict = false)
+            const std::vector<std::string_view>& exp_data, int64_t tolerance)
       : l_data(std::move(l_data)),
         r0_data(std::move(r0_data)),
         r1_data(std::move(r1_data)),
@@ -794,7 +793,7 @@ struct BasicTest {
     std::uniform_int_distribution<size_t> r1_distribution(0, r1_types.size() - 1);
     std::uniform_int_distribution<int> dict_distribution(0, 3);
 
-    auto maybe_wrap_with_dict = [&dict_distribution, &engine](const auto& t) {
+    auto maybe_dictionary_encode = [&dict_distribution, &engine](const auto& t) {
       bool dict = dict_distribution(engine) == 0; // 25% of columns are dictionary-encoded
       return dict ? dictionary(int32(), t) : t;
     };
@@ -802,20 +801,20 @@ struct BasicTest {
     for (int i = 0; i < 100; i++) {
       ARROW_SCOPED_TRACE("Iteration: ", i);
       auto time_type = time_types[time_distribution(engine)];
-      auto l_time = maybe_wrap_with_dict(time_type);
-      auto r0_time = maybe_wrap_with_dict(time_type);
-      auto r1_time = maybe_wrap_with_dict(time_type);
+      auto l_time = maybe_dictionary_encode(time_type);
+      auto r0_time = maybe_dictionary_encode(time_type);
+      auto r1_time = maybe_dictionary_encode(time_type);
       ARROW_SCOPED_TRACE("Time types: ", *l_time, ", ", *r0_time, ", ", *r1_time);
       auto key_type = key_types[key_distribution(engine)];
-      auto l_key = maybe_wrap_with_dict(key_type);
-      auto r0_key = maybe_wrap_with_dict(key_type);
-      auto r1_key = maybe_wrap_with_dict(key_type);
+      auto l_key = maybe_dictionary_encode(key_type);
+      auto r0_key = maybe_dictionary_encode(key_type);
+      auto r1_key = maybe_dictionary_encode(key_type);
       ARROW_SCOPED_TRACE("Key types: ", *l_key, ", ", *r0_key, ", ", *r1_key);
-      auto l_type = maybe_wrap_with_dict(l_types[l_distribution(engine)]);
+      auto l_type = maybe_dictionary_encode(l_types[l_distribution(engine)]);
       ARROW_SCOPED_TRACE("Left type: ", *l_type);
-      auto r0_type = maybe_wrap_with_dict(r0_types[r0_distribution(engine)]);
+      auto r0_type = maybe_dictionary_encode(r0_types[r0_distribution(engine)]);
       ARROW_SCOPED_TRACE("Right-0 type: ", *r0_type);
-      auto r1_type = maybe_wrap_with_dict(r1_types[r1_distribution(engine)]);
+      auto r1_type = maybe_dictionary_encode(r1_types[r1_distribution(engine)]);
       ARROW_SCOPED_TRACE("Right-1 type: ", *r1_type);
 
       RunTypes(
@@ -1608,6 +1607,43 @@ TRACED_TEST(AsofJoinTest, TestDifferentDictionariesData, {
       schema({field("time", int32()), field("key", int32()), field("data", dictionary(int32(), utf8()))}),
       "Input 1 uses multiple dictionaries for field data");
 })
+
+TEST(AsofJoinTest, SimpleDictionary) {
+  std::shared_ptr<Table> left, right, expected, result;
+  {
+    auto on = DictArrayFromJSON(dictionary(int32(), int32()), R"([2, 1, 1, 3, 0, 0])", R"([15, 5, 0, 6])");
+    auto by = ArrayFromJSON(utf8(), R"(["a", "b", "c", "b", "b", "a"])");
+    auto schema_ = schema({field("on", on->type()), field("by", by->type())});
+    left = Table::Make(schema_, {on, by});
+  }
+
+  {
+    auto on = ArrayFromJSON(int32(), R"([1, 1, 6, 10, 12, 16])");
+    auto by = DictArrayFromJSON(dictionary(int8(), utf8()), R"([0, 1, 2, 1, 0, 1])", R"(["a", "b", "c"])");
+    auto payload = DictArrayFromJSON(dictionary(int16(), uint8()), R"([5, 4, 3, 2, 1, 0])", R"([6, 5, 4, 3, 2, 1])");
+    auto schema_ = schema({field("on", on->type()), field("by", by->type()), field("payload", payload->type())});
+    right = Table::Make(schema_, {on, by, payload});
+  }
+
+  {
+    auto on = DictArrayFromJSON(dictionary(int32(), int32()), R"([2, 1, 1, 3, 0, 0])", R"([15, 5, 0, 6])");
+    auto by = ArrayFromJSON(utf8(), R"(["a", "b", "c", "b", "b", "a"])");
+    auto payload = DictArrayFromJSON(dictionary(int16(), uint8()), R"([null, 4, null, 4, 2, 1])", R"([6, 5, 4, 3, 2, 1])");
+    auto schema_ = schema({field("on", on->type()), field("by", by->type()), field("payload", payload->type())});
+    expected = Table::Make(schema_, {on, by, payload});
+  }
+
+  {
+    Declaration left_source("table_source", TableSourceNodeOptions(left));
+    Declaration right_source("table_source", TableSourceNodeOptions(right));
+    AsofJoinNodeOptions options({{"on", {"by"}}, {"on", {"by"}}}, -5);
+    auto asofjoin = Declaration("asofjoin", {std::move(left_source), std::move(right_source)}, std::move(options));
+
+    ASSERT_OK_AND_ASSIGN(result, DeclarationToTable(asofjoin));
+  }
+
+  AssertTablesEqual(*expected, *result);
+}
 
 struct BackpressureCounters {
   std::atomic<int32_t> pause_count = 0;
