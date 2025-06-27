@@ -520,7 +520,7 @@ class InputState : public util::SerialSequencingQueue::Processor {
         time_col_index_(time_col_index),
         key_col_index_(key_col_index),
         time_type_id_(schema_->fields()[time_col_index_]->type()->id()),
-        time_dictionary_index_type_id_(Type::NA),
+        time_dictionary_index_type_id_(),
         key_type_id_(key_col_index.size()),
         key_hasher_(key_hasher),
         dictionaries_(schema->num_fields()),
@@ -652,10 +652,10 @@ class InputState : public util::SerialSequencingQueue::Processor {
   }
 
   OnType GetTime(const RecordBatch* batch, int col, uint64_t row) const {
-    if (time_dictionary_index_type_id_ == Type::NA) {
-      return arrow::acero::GetTime(batch, time_type_id_, col, row);
+    if (time_dictionary_index_type_id_.has_value()) {
+      return arrow::acero::GetTimeDict(batch, time_dictionary_index_type_id_.value(), time_type_id_, col, row);
     } else {
-      return arrow::acero::GetTimeDict(batch, time_dictionary_index_type_id_, time_type_id_, col, row);
+      return arrow::acero::GetTime(batch, time_type_id_, col, row);
     }
   }
 
@@ -861,9 +861,9 @@ class InputState : public util::SerialSequencingQueue::Processor {
   std::vector<col_index_t> key_col_index_;
   // Type id of the time column
   Type::type time_type_id_;
-  // Type id of the time column's index type or Type::NA if the time column
+  // Type id of the time column's index type or nullopt if the time column
   // is not a dictionary
-  Type::type time_dictionary_index_type_id_;
+  std::optional<Type::type> time_dictionary_index_type_id_;
   // Type id of the key column
   std::vector<Type::type> key_type_id_;
   // Hasher for key elements
