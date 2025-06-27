@@ -1489,8 +1489,11 @@ class AsofJoinNode : public ExecNode {
     for (size_t i = 0; i < n_input; i++) {
       key_hashers.push_back(std::make_unique<KeyHasher>(i, indices_of_by_key[i]));
     }
+    // If there are multiple by-columns, we need to hash them into a single uint64_t
     bool must_hash = n_by > 1;
-    if (!must_hash && n_by > 0) {
+    // We also need to hash if we have a non-primitive by-column. We iterate over all inputs
+    // to check if any of them are dictionary-encoded since that requires hashing.
+    if (n_by == 1) {
       for (size_t i = 0; i < n_input; i++) {
         col_index_t icol = indices_of_by_key[i][0];
         if (!is_primitive(inputs[i]->output_schema()->field(icol)->type()->id())) {
