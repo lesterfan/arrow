@@ -84,7 +84,7 @@ KeyColumnArray KeyColumnArray::Slice(int64_t offset, int64_t length) const {
   KeyColumnArray sliced;
   sliced.metadata_ = metadata_;
   sliced.length_ = length;
-  sliced.dictionary_ = dictionary_;
+  sliced.dictionary_array_ = dictionary_array_;
   uint32_t fixed_size = metadata_.fixed_length;
 
   sliced.buffers_[0] =
