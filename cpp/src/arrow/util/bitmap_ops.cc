@@ -328,6 +328,22 @@ bool OptionalBitmapEquals(const std::shared_ptr<Buffer>& left, int64_t left_offs
 
 namespace {
 
+// Writes `bit_count` bits of `byte` (starting a `offset`) to
+// `out` (starting at `offset`). `offset` measures the distance
+// in bits from the least significant bit.
+void WritePartialByte(uint8_t* out, int64_t offset, uint8_t byte, int64_t bit_count) {
+  internal::BitmapWriter writer(out, offset, bit_count);
+  for (int64_t i = 0; i < bit_count; i++) {
+    if (bit_util::GetBitFromByte(byte, offset + i)) {
+      writer.Set();
+    } else {
+      writer.Clear();
+    }
+    writer.Next();
+  }
+  writer.Finish();
+}
+
 template <template <typename> class BitOp>
 void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* right,
                      int64_t right_offset, uint8_t* out, int64_t out_offset,
@@ -336,13 +352,36 @@ void AlignedBitmapOp(const uint8_t* left, int64_t left_offset, const uint8_t* ri
   DCHECK_EQ(left_offset % 8, right_offset % 8);
   DCHECK_EQ(left_offset % 8, out_offset % 8);
 
-  const int64_t nbytes = bit_util::BytesForBits(length + left_offset % 8);
+  int64_t nbytes = bit_util::CoveringBytes(left_offset, length);
+  if (nbytes == 0) {
+    return;
+  }
+
+  int64_t offset = left_offset % 8;
   left += left_offset / 8;
   right += right_offset / 8;
   out += out_offset / 8;
-  for (int64_t i = 0; i < nbytes; ++i) {
+
+  // Handle the first byte
+  int64_t bits_in_first_byte = std::min(length, offset == 0 ? 8 : 8 - offset);
+  uint8_t first_byte_out = op(left[0], right[0]);
+  WritePartialByte(out, offset, first_byte_out, bits_in_first_byte);
+
+  // If there is only one byte, we are done
+  if (nbytes == 1) {
+    return;
+  }
+
+  // Handle middle bytes
+  for (int64_t i = 1; i < nbytes - 1; ++i) {
     out[i] = op(left[i], right[i]);
   }
+
+  // Handle the last byte
+  uint64_t end_offset = (offset + length) % 8;
+  uint64_t bits_in_last_byte = end_offset == 0 ? 8 : end_offset;
+  uint8_t last_byte_out = op(left[nbytes - 1], right[nbytes - 1]);
+  WritePartialByte(&out[nbytes - 1], 0, last_byte_out, bits_in_last_byte);
 }
 
 template <template <typename> class BitOp>

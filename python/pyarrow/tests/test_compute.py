@@ -1804,6 +1804,19 @@ def test_logical():
     assert pc.invert(a) == pa.array([False, True, True, None])
 
 
+def test_logical_with_offset():
+    true_true = pa.array([True, True])
+    false_false = pa.array([False, False])
+    false_true = pa.chunked_array([
+        [False],
+        true_true.slice(1),
+    ])
+
+    assert pc.and_(true_true, false_true) == pa.chunked_array([[False, True]])
+    assert pc.or_(false_false, false_true) == pa.chunked_array([[False, True]])
+    assert pc.xor(true_true, false_true) == pa.chunked_array([[True, False]])
+
+
 def test_dictionary_decode():
     array = pa.array(["a", "a", "b", "c", "b"])
     dictionary_array = array.dictionary_encode()
