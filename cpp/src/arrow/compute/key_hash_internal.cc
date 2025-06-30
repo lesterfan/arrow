@@ -378,6 +378,83 @@ void Hashing32::HashFixed(int64_t hardware_flags, bool combine_hashes, uint32_t 
   }
 }
 
+void Hashing32::HashDict(int64_t hardware_flags, bool combine_hashes, uint32_t num_keys,
+                         uint32_t index_length, const uint8_t* indices,
+                         const KeyColumnArray* dict_array, uint32_t* hashes,
+                         uint32_t* temp_hashes_for_combine) {
+  if (dict_array->metadata().is_null_type) {
+    if (combine_hashes) {
+      for (uint32_t i = 0; i < num_keys; ++i) {
+        hashes[i] = CombineHashesImp(hashes[i], 0);
+      }
+    } else {
+      for (uint32_t i = 0; i < num_keys; ++i) {
+        hashes[i] = 0;
+      }
+    }
+    return;
+  }
+
+  for (uint32_t ikey = 0; ikey < num_keys; ikey++) {
+    uint64_t index = 0;
+    switch (index_length) {
+      case sizeof(uint8_t):
+        index = reinterpret_cast<const uint8_t*>(indices)[ikey];
+        break;
+      case sizeof(uint16_t):
+        index = reinterpret_cast<const uint16_t*>(indices)[ikey];
+        break;
+      case sizeof(uint32_t):
+        index = reinterpret_cast<const uint32_t*>(indices)[ikey];
+        break;
+      case sizeof(uint64_t):
+        index = reinterpret_cast<const uint64_t*>(indices)[ikey];
+        break;
+      default:
+        ARROW_DCHECK(false);
+        break;
+    }
+
+    // Check if dictionary contains null at index
+    if (dict_array->data(0) && !bit_util::GetBit(dict_array->data(0), dict_array->bit_offset(0) + index)) {
+      if (combine_hashes) {
+        hashes[ikey] = CombineHashesImp(hashes[ikey], 0);
+      } else {
+        hashes[ikey] = 0;
+      }
+      continue;
+    }
+
+    // If the index is null in the indices array, the index value we just
+    // read can be anything. If the index is out of bounds, we skip the
+    // dictionary lookup.
+    if (index >= static_cast<uint64_t>(dict_array->length())) {
+      continue;
+    }
+
+    // Hash dict_array[index] and store result in hashes[ikey]
+    if (dict_array->metadata().is_fixed_length) {
+      uint64_t value_length = dict_array->metadata().fixed_length;
+      if (value_length == 0) {
+        HashBit(combine_hashes, dict_array->bit_offset(1), 1,
+                dict_array->data(1) + index / 8, hashes + ikey);
+      } else {
+        HashFixed(hardware_flags, combine_hashes, 1,
+                  value_length, dict_array->data(1) + index * value_length,
+                  hashes + ikey, temp_hashes_for_combine);
+      }
+    } else if (dict_array->metadata().fixed_length == sizeof(uint32_t)) {
+      HashVarLen(hardware_flags, combine_hashes, 1,
+                 dict_array->offsets() + index, dict_array->data(2),
+                 hashes + ikey, temp_hashes_for_combine);
+    } else {
+      HashVarLen(hardware_flags, combine_hashes, 1,
+                 dict_array->large_offsets() + index, dict_array->data(2),
+                 hashes + ikey, temp_hashes_for_combine);
+    }
+  }
+}
+
 void Hashing32::HashMultiColumn(const std::vector<KeyColumnArray>& cols,
                                 LightContext* ctx, uint32_t* hashes) {
   uint32_t num_rows = static_cast<uint32_t>(cols[0].length());
@@ -424,7 +501,13 @@ void Hashing32::HashMultiColumn(const std::vector<KeyColumnArray>& cols,
         }
       }
 
-      if (cols[icol].metadata().is_fixed_length) {
+      if (cols[icol].dictionary_array() != NULLPTR) {
+        uint32_t index_length = cols[icol].metadata().fixed_length;
+        HashDict(ctx->hardware_flags, icol > 0, batch_size_next,
+                 index_length, cols[icol].data(1) + first_row * index_length,
+                 cols[icol].dictionary_array(), hashes + first_row,
+                 hash_temp);
+      } else if (cols[icol].metadata().is_fixed_length) {
         uint32_t key_length = cols[icol].metadata().fixed_length;
         if (key_length == 0) {
           HashBit(icol > 0, cols[icol].bit_offset(1), batch_size_next,
@@ -821,6 +904,79 @@ void Hashing64::HashFixed(bool combine_hashes, uint32_t num_keys, uint64_t key_l
   }
 }
 
+void Hashing64::HashDict(bool combine_hashes, uint32_t num_keys, uint32_t index_length,
+                         const uint8_t* indices, const KeyColumnArray* dict_array,
+                         uint64_t* hashes) {
+  if (dict_array->metadata().is_null_type) {
+    if (combine_hashes) {
+      for (uint32_t i = 0; i < num_keys; ++i) {
+        hashes[i] = CombineHashesImp(hashes[i], 0ULL);
+      }
+    } else {
+      for (uint32_t i = 0; i < num_keys; ++i) {
+        hashes[i] = 0ULL;
+      }
+    }
+    return;
+  }
+
+  for (uint32_t ikey = 0; ikey < num_keys; ikey++) {
+    uint64_t index = 0;
+    switch (index_length) {
+      case sizeof(uint8_t):
+        index = reinterpret_cast<const uint8_t*>(indices)[ikey];
+        break;
+      case sizeof(uint16_t):
+        index = reinterpret_cast<const uint16_t*>(indices)[ikey];
+        break;
+      case sizeof(uint32_t):
+        index = reinterpret_cast<const uint32_t*>(indices)[ikey];
+        break;
+      case sizeof(uint64_t):
+        index = reinterpret_cast<const uint64_t*>(indices)[ikey];
+        break;
+      default:
+        ARROW_DCHECK(false);
+        break;
+    }
+
+    // Check if dictionary contains null at index
+    if (dict_array->data(0) && !bit_util::GetBit(dict_array->data(0), dict_array->bit_offset(0) + index)) {
+      if (combine_hashes) {
+        hashes[ikey] = CombineHashesImp(hashes[ikey], 0ULL);
+      } else {
+        hashes[ikey] = 0ULL;
+      }
+      continue;
+    }
+
+    // If the index is null in the indices array, the index value we just
+    // read can be anything. If the index is out of bounds, we skip the
+    // dictionary lookup.
+    if (index >= static_cast<uint64_t>(dict_array->length())) {
+      continue;
+    }
+
+    // Hash dict_array[index] and store result in hashes[ikey]
+    if (dict_array->metadata().is_fixed_length) {
+      uint64_t value_length = dict_array->metadata().fixed_length;
+      if (value_length == 0) {
+        HashBit(combine_hashes, dict_array->bit_offset(1), 1,
+                dict_array->data(1) + index / 8, hashes + ikey);
+      } else {
+        HashFixed(combine_hashes, 1, value_length,
+                  dict_array->data(1) + index * value_length, hashes + ikey);
+      }
+    } else if (dict_array->metadata().fixed_length == sizeof(uint32_t)) {
+      HashVarLen(combine_hashes, 1, dict_array->offsets() + index,
+                 dict_array->data(2), hashes + ikey);
+    } else {
+      HashVarLen(combine_hashes, 1, dict_array->large_offsets() + index,
+                 dict_array->data(2), hashes + ikey);
+    }
+  }
+}
+
 void Hashing64::HashMultiColumn(const std::vector<KeyColumnArray>& cols,
                                 LightContext* ctx, uint64_t* hashes) {
   uint32_t num_rows = static_cast<uint32_t>(cols[0].length());
@@ -864,7 +1020,13 @@ void Hashing64::HashMultiColumn(const std::vector<KeyColumnArray>& cols,
         }
       }
 
-      if (cols[icol].metadata().is_fixed_length) {
+      if (cols[icol].dictionary_array() != NULLPTR) {
+        uint32_t index_length = cols[icol].metadata().fixed_length;
+        HashDict(icol > 0, batch_size_next, index_length,
+                 cols[icol].data(1) + first_row * index_length,
+                 cols[icol].dictionary_array(),
+                 hashes + first_row);
+      } else if (cols[icol].metadata().is_fixed_length) {
         uint64_t key_length = cols[icol].metadata().fixed_length;
         if (key_length == 0) {
           HashBit(icol > 0, cols[icol].bit_offset(1), batch_size_next,

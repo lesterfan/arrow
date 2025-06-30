@@ -121,6 +121,10 @@ class ARROW_EXPORT Hashing32 {
   static void HashIntImp(uint32_t num_keys, const T* keys, uint32_t* hashes);
   static void HashInt(bool combine_hashes, uint32_t num_keys, uint64_t key_length,
                       const uint8_t* keys, uint32_t* hashes);
+  static void HashDict(int64_t hardware_flags, bool combine_hashes, uint32_t num_keys,
+                       uint32_t index_length, const uint8_t* indices,
+                       const KeyColumnArray* dict_array, uint32_t* hashes,
+                       uint32_t* temp_hashes_for_combine);
 
 #if defined(ARROW_HAVE_RUNTIME_AVX2)
   static inline __m256i Avalanche_avx2(__m256i hash);
@@ -233,6 +237,9 @@ class ARROW_EXPORT Hashing64 {
   static void HashIntImp(uint32_t num_keys, const T* keys, uint64_t* hashes);
   static void HashInt(bool combine_hashes, uint32_t num_keys, uint64_t key_length,
                       const uint8_t* keys, uint64_t* hashes);
+  static void HashDict(bool combine_hashes, uint32_t num_keys, uint32_t index_length,
+                       const uint8_t* indices, const KeyColumnArray* dict_array,
+                       uint64_t* hashes);
 };
 
 }  // namespace compute

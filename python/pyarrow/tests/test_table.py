@@ -3280,12 +3280,108 @@ def test_table_join_asof_on_type_mismatch():
         "on": [2., 3., 4.],
     })
 
-    msg = "Expected on-key type int64 but got double for field on in input 1"
+    msg = "Incompatible data types for on-key: expected a type compatible with int64 but got double for field on in input 1"
     with pytest.raises(pa.lib.ArrowInvalid, match=msg):
         t1.join_asof(
             t2, on="on", by=["colA"], tolerance=1,
             right_on="on", right_by=["colA"],
         )
+
+
+@pytest.mark.dataset
+def test_table_join_asof_dict_time():
+    t1 = pa.table({
+        "colA": [10, 20, 60, 80],
+        "colB": [1, 2, 6, 4],
+        "on": pa.array([1, 2, 3, 3]).dictionary_encode(),
+    })
+
+    t2 = pa.table({
+        "colC": ["X", "Y", "Z"],
+        "colA": [20, 60, 90],
+        "on": [2, 3, 4],
+    })
+
+    result = t1.join_asof(t2, on="on", by="colA", tolerance=0)
+    assert result == pa.table({
+        "colA": [10, 20, 60, 80],
+        "colB": [1, 2, 6, 4],
+        "on": pa.array([1, 2, 3, 3]).dictionary_encode(),
+        "colC": [None, "X", "Y", None],
+    })
+
+
+@pytest.mark.dataset
+def test_table_join_asof_dict_key():
+    t1 = pa.table({
+        "key": ["a", "b", "b", "a", "b", "a"],
+        "time": [10, 15, 20, 25, 30, 35],
+    })
+
+    t2 = pa.table({
+        "key": pa.array(["a", "b", "a"]).dictionary_encode(),
+        "time": [12, 18, 30],
+        "value": [100, 200, 300],
+    })
+
+    result = t1.join_asof(t2, on="time", by="key", tolerance=10)
+    assert result == pa.table({
+        "key": ["a", "b", "b", "a", "b", "a"],
+        "time": [10, 15, 20, 25, 30, 35],
+        "value": [100, 200, None, 300, None, None],
+    })
+
+
+@pytest.mark.dataset
+def test_table_join_asof_dict_multiple_keys():
+    t1 = pa.table({
+        "time": [10, 20, 30, 40],
+        "key1": pa.array([1, 0, 0, 1]).dictionary_encode(),
+        "key2": ["x", "y", "z", "x"],
+    })
+
+    t2 = pa.table({
+        "time": [12, 18, 30, 35],
+        "key1": [0, 1, 0, 1],
+        "key2": pa.array(["x", "y", "z", "z"]).dictionary_encode(),
+        "payload": [100, 200, 300, 400],
+    })
+
+    result = t1.join_asof(
+        t2, on="time", by=["key1", "key2"], tolerance=5
+    )
+    assert result == pa.table({
+        "time": [10, 20, 30, 40],
+        "key1": pa.array([1, 0, 0, 1]).dictionary_encode(),
+        "key2": ["x", "y", "z", "x"],
+        "payload": [None, None, 300, None],
+    })
+
+
+@pytest.mark.dataset
+def test_table_join_asof_different_dict():
+    t1 = pa.table({
+        "on": [1, 2, 3, 4],
+        "val1": [10, 20, 30, 40],
+    })
+
+    t2 = pa.table({
+        "on": [1, 2, 3],
+        "val2": pa.chunked_array([
+            pa.DictionaryArray.from_arrays(
+                [1, 0],
+                [20, 10],
+            ),
+            pa.DictionaryArray.from_arrays(
+                [0],
+                [30],
+            ),
+        ])
+    })
+
+    msg = "Input 1 uses multiple dictionaries for field val2"
+    with pytest.raises(pa.lib.ArrowNotImplementedError, match=msg):
+        t1.join_asof(t2, on="on", by=[], tolerance=1)
 
 
 @pytest.mark.parametrize(
