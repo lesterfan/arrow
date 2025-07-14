@@ -17,16 +17,29 @@
 
 #include "arrow/dataset/dataset.h"
 
+#include <filesystem>
+#include <memory>
 #include <optional>
 
+#include "arrow/compute/api_vector.h"
+#include "arrow/compute/expression.h"
+#include "arrow/dataset/api.h"
 #include "arrow/dataset/dataset_internal.h"
 #include "arrow/dataset/discovery.h"
+#include "arrow/dataset/file_parquet.h"
 #include "arrow/dataset/partition.h"
 #include "arrow/dataset/projector.h"
+#include "arrow/dataset/scanner.h"
 #include "arrow/dataset/test_util_internal.h"
+#include "arrow/datum.h"
 #include "arrow/filesystem/mockfs.h"
 #include "arrow/stl.h"
 #include "arrow/testing/generator.h"
+#include "arrow/testing/gtest_util.h"
+#include "gmock/gmock-matchers.h"
+#include "gtest/gtest.h"
+#include "parquet/arrow/reader.h"
+#include "parquet/arrow/writer.h"
 
 namespace arrow {
 namespace dataset {
@@ -801,6 +814,118 @@ TEST(TestDictPartitionColumn, SelectPartitionColumnFilterPhysicalColumn) {
   AssertArraysEqual(*table->column(0)->chunk(0),
                     *ArrayFromJSON(partition_field->type(), R"(["one"])"));
 }
+
+namespace {
+
+namespace ac = arrow::compute;
+
+// Helper to create a temporary directory with multiple Parquet files
+// that have different, evolving schemas.
+void CreateEvolvingDataset(const std::string& root_path,
+                           std::shared_ptr<arrow::Schema>* final_schema) {
+  // Ensure the temporary directory exists and is empty
+  std::filesystem::create_directory(root_path);
+
+  // Schema for the first file
+  auto schema1 = arrow::schema(
+      {arrow::field("k1", arrow::int64()), arrow::field("v1", arrow::boolean())});
+
+  // Schema for the second file, with an added column
+  auto schema2 = arrow::schema({arrow::field("k1", arrow::int64()),
+                                arrow::field("v1", arrow::boolean()),
+                                arrow::field("v2", arrow::float32())});
+
+  // The final, unified schema that the query will project to
+  *final_schema = arrow::schema({arrow::field("k1", arrow::int64()),
+                                 arrow::field("v1", arrow::boolean()),
+                                 arrow::field("v2", arrow::float32())});
+
+  // Write the first table (old schema)
+  {
+    std::shared_ptr<arrow::Table> table =
+        arrow::TableFromJSON(schema1, {R"([[0, true], [1, false]])"});
+    std::string file_path = std::filesystem::path(root_path) / "file0.parquet";
+    std::shared_ptr<arrow::io::FileOutputStream> outfile;
+    ASSERT_OK_AND_ASSIGN(outfile, arrow::io::FileOutputStream::Open(file_path));
+    ASSERT_OK(
+        parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), outfile, 2));
+  }
+
+  // Write the second table (new schema)
+  {
+    std::shared_ptr<arrow::Table> table =
+        arrow::TableFromJSON(schema2, {R"([[2, true, 1.1], [3, false, 2.2]])"});
+    std::string file_path = std::filesystem::path(root_path) / "file1.parquet";
+    std::shared_ptr<arrow::io::FileOutputStream> outfile;
+    ASSERT_OK_AND_ASSIGN(outfile, arrow::io::FileOutputStream::Open(file_path));
+    ASSERT_OK(
+        parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), outfile, 2));
+  }
+}
+
+// The test case demonstrating the bug with schema evolution
+TEST(LesterTest, LesterTest) {
+  // 1. Setup: Create the dataset on disk
+  std::string tmp_dir = std::filesystem::absolute("./test_acero_lifecycle_data").string();
+  std::filesystem::remove_all(tmp_dir);  // Clean up from previous runs
+  std::shared_ptr<arrow::Schema> final_schema;
+  CreateEvolvingDataset(tmp_dir, &final_schema);
+
+  // 2. Discover the Dataset using Arrow's Dataset API
+  auto fs = arrow::fs::FileSystemFromUriOrPath(tmp_dir).ValueOrDie();
+  auto format = std::make_shared<arrow::dataset::ParquetFileFormat>();
+  arrow::fs::FileSelector selector;
+  selector.base_dir = tmp_dir;
+  selector.recursive = true;
+  auto factory = arrow::dataset::FileSystemDatasetFactory::Make(
+                     fs, selector, format, arrow::dataset::FileSystemFactoryOptions{})
+                     .ValueOrDie();
+
+  // FIX: Provide the final schema to the factory when creating the dataset.
+  // This ensures the dataset object is aware of all columns from all files.
+  auto dataset = factory->Finish(final_schema).ValueOrDie();
+
+  // The filter to be used in both queries
+  ac::Expression filter = ac::equal(ac::field_ref("v1"), ac::literal(true));
+
+  // 3. First Query Execution Block
+  {
+    std::cout << "Starting first query..." << std::endl;
+    auto scanner_builder = dataset->NewScan().ValueOrDie();
+    // Projection is no longer strictly necessary since the dataset has the
+    // correct schema, but we keep it to match the original test's intent.
+    ASSERT_OK(scanner_builder->Project(final_schema->field_names()));
+    ASSERT_OK(scanner_builder->Filter(filter));
+    ASSERT_OK(scanner_builder->UseThreads(true));
+    auto scanner = scanner_builder->Finish().ValueOrDie();
+    auto table_result = scanner->ToTable();
+    ASSERT_TRUE(table_result.ok());
+    std::cout << "First query finished successfully. Result has "
+              << table_result.ValueUnsafe()->num_rows() << " rows." << std::endl;
+  }  // <-- scanner is destroyed here, corrupting the schema reconciliation
+  // state.
+
+  // 4. Second Query Execution Block
+  {
+    std::cout << "\nStarting second query..." << std::endl;
+    auto scanner_builder = dataset->NewScan().ValueOrDie();
+    ASSERT_OK(scanner_builder->Project(final_schema->field_names()));
+    ASSERT_OK(scanner_builder->Filter(filter));
+    ASSERT_OK(scanner_builder->UseThreads(true));
+    auto scanner = scanner_builder->Finish().ValueOrDie();
+
+    // THIS IS THE EXPECTED CRASH POINT
+    auto table_result = scanner->ToTable();
+
+    ASSERT_TRUE(table_result.ok());  // This line likely won't be reached
+    std::cout << "Second query finished successfully." << std::endl;
+  }
+
+  // 5. Cleanup
+  std::filesystem::remove_all(tmp_dir);
+}
+
+}  // anonymous namespace
 
 }  // namespace dataset
 }  // namespace arrow
