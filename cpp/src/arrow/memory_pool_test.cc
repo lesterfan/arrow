@@ -27,6 +27,13 @@
 #include "arrow/util/config.h"
 #include "arrow/util/logging.h"
 
+#include <sys/mman.h>
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+#include <memory>
+#include "arrow/api.h"
+
 namespace arrow {
 
 struct DefaultMemoryPoolFactory {
@@ -288,6 +295,29 @@ TEST(Jemalloc, GetAllocationStats) {
   ASSERT_RAISES(NotImplemented, jemalloc_stats_print(write_cb, "Jax"));
   ASSERT_RAISES(NotImplemented, jemalloc_stats_print("ax"));
 #endif
+}
+
+
+TEST(Lester, LesterTest) {
+  constexpr int PROT = PROT_READ | PROT_WRITE;
+  constexpr int FLAGS = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_NORESERVE;
+  constexpr uintptr_t BEGIN = 0x02008fff7000ULL;
+  constexpr uintptr_t END = 0x10007fff7fffULL;
+  constexpr size_t LEN = static_cast<size_t>(END - BEGIN + 1);
+
+  arrow::Int64Builder a, b;
+  ASSERT_TRUE(a.AppendValues({1, 2}).ok());
+  ASSERT_TRUE(b.AppendValues({3, 4}).ok());
+  std::shared_ptr<arrow::Array> aa, bb;
+  ASSERT_TRUE(a.Finish(&aa).ok());
+  ASSERT_TRUE(b.Finish(&bb).ok());
+  auto schema = arrow::schema(
+      {arrow::field("a", arrow::int64()), arrow::field("b", arrow::int64())});
+  auto table = arrow::Table::Make(schema, {aa, bb});
+  (void)table;
+
+  void* shadow_region = mmap(reinterpret_cast<void*>(BEGIN), LEN, PROT, FLAGS, 0, 0);
+  ASSERT_EQ(shadow_region, reinterpret_cast<void*>(BEGIN)) << "mmap failed (" << errno << "): " << std::strerror(errno);
 }
 
 }  // namespace arrow
