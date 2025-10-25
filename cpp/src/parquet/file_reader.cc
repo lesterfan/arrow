@@ -124,8 +124,6 @@ std::shared_ptr<internal::RecordReader> RowGroupReader::RecordReader(
 
   internal::LevelInfo level_info = internal::LevelInfo::ComputeLevelInfo(descr);
 
-  printf("RowGroupReader::RecordReader, read_ree: %d\n", read_ree);
-
   auto reader = internal::RecordReader::Make(
       descr, level_info, contents_->properties()->memory_pool(), read_dictionary,
       contents_->properties()->read_dense_for_nullable(), read_ree);

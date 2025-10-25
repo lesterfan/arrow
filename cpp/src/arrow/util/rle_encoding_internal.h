@@ -730,7 +730,6 @@ void RleBitPackedDecoder<T>::ParseWithCallable(Callable&& func) {
     auto OnBitPackedRun(BitPackedRun run) { return func(std::move(run)); }
     auto OnRleRun(RleRun run) { return func(std::move(run)); }
   } handler{std::move(func)};
-  printf("In ParseWithCallable\n");
   parser_.Parse(std::move(handler));
 }
 
@@ -741,14 +740,9 @@ bool RleBitPackedDecoder<T>::Get(value_type* val) {
 
 template <typename T>
 bool RleBitPackedDecoder<T>::GetNextValueAndNumRepeats(value_type* val, int* num_repeats, int batch_size) {
-  printf("In RleBitPackedDecoder<T>::GetNextValueAndNumRepeats\n");
-
   using ControlFlow = RleBitPackedParser::ControlFlow;
 
-  printf("run_remaining(): %d\n", run_remaining());
-
   if (ARROW_PREDICT_FALSE(run_remaining() > 0)) {
-    printf("run_remaining() > 0\n");
     if (std::holds_alternative<BitPackedRunDecoder<value_type>>(decoder_)) {
       auto& decoder = std::get<BitPackedRunDecoder<value_type>>(decoder_);
       *num_repeats = 1;
@@ -764,9 +758,7 @@ bool RleBitPackedDecoder<T>::GetNextValueAndNumRepeats(value_type* val, int* num
   bool read_new_value = false;
 
   ParseWithCallable([&](auto run) {
-    printf("In ParseWithCallable\n");
     if constexpr(std::is_same_v<decltype(run), BitPackedRun>) {
-      printf("Decoding BitPackedRun; not currently optimal\n");
       BitPackedRunDecoder<T> decoder(run, value_bit_width_);
       read_new_value = decoder.Get(val, value_bit_width_);
       *num_repeats = 1;
@@ -774,7 +766,6 @@ bool RleBitPackedDecoder<T>::GetNextValueAndNumRepeats(value_type* val, int* num
       return ControlFlow::Break;
     }
     else {
-      printf("Decoding RleRun\n");
       RleRunDecoder<T> decoder(run, value_bit_width_);
       *num_repeats = std::min(decoder.remaining(), batch_size);
       read_new_value = decoder.Get(val, value_bit_width_);
@@ -791,7 +782,6 @@ template <typename T>
 bool RleBitPackedDecoder<T>::GetNextValueAndNumRepeatsSpaced(value_type* val, bool* is_null,
                                                      int* num_repeats, int batch_size,
                                                      const uint8_t* valid_bits, int64_t valid_bits_offset) {
-  printf("In RleBitPackedDecoder<T>::GetNextLogicalRunSpaced\n");
   arrow::internal::BitRunReader bit_reader(valid_bits, valid_bits_offset,
                                            /*length=*/batch_size);
   arrow::internal::BitRun valid_run = bit_reader.NextRun();

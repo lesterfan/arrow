@@ -459,8 +459,6 @@ class LeafReader : public ColumnReaderImpl {
         (::arrow::is_base_binary_like(type_id) || ::arrow::is_binary_view_like(type_id))
             ? field_->type()
             : nullptr;
-    printf("In LeafReader, field_->type()->id(): %d, run_end_encoded_id: %d, read_run_end_encoded: %d\n",
-      field_->type()->id(), ::arrow::Type::RUN_END_ENCODED, field_->type()->id() == ::arrow::Type::RUN_END_ENCODED);
     record_reader_ = RecordReader::Make(
         descr_, leaf_info, ctx_->pool,
         /*read_dictionary=*/field_->type()->id() == ::arrow::Type::DICTIONARY,
