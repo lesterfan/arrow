@@ -868,6 +868,7 @@ class PlainByteArrayDecoder : public PlainDecoder<ByteArrayType> {
                           int64_t valid_bits_offset,
                           typename EncodingTraits<ByteArrayType>::ReeAccumulator* out,
                           int* out_values_decoded) {
+    printf("PlainByteArrayDecoder DecodeArrowDense\n");
     ReeBuilderHelper helper(out);
     int values_decoded = 0;
     int i = 0;
@@ -1407,6 +1408,7 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType> {
                           int64_t valid_bits_offset,
                           typename EncodingTraits<ByteArrayType>::ReeAccumulator* builder,
                           int* out_num_values) {
+    printf("DictByteArrayDecoderImpl DecodeArrowDense\n");
     int total_values_decoded = 0;
     int non_null_values_decoded = 0;
     ReeBuilderHelper helper(builder);
@@ -1442,6 +1444,8 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType> {
   Status DecodeArrowDenseNonNull(
       int num_values, typename EncodingTraits<ByteArrayType>::ReeAccumulator* builder,
       int* out_num_values) {
+    // HERE!!!
+    printf("DictByteArrayDecoderImpl DecodeArrowDenseNonNull\n");
     int values_decoded = 0;
     ReeBuilderHelper helper(builder);
     const auto* dict_values = dictionary_->data_as<ByteArray>();
@@ -1455,6 +1459,10 @@ class DictByteArrayDecoderImpl : public DictDecoderImpl<ByteArrayType> {
       DCHECK_GT(num_repeats, 0);
       RETURN_NOT_OK(IndexInBounds(idx));
       const auto& val = dict_values[idx];
+
+      printf("Decoded val: %s, num_repeats: %d\n", 
+        ByteArrayToString(val).c_str(), num_repeats);
+
       RETURN_NOT_OK(helper.update(val, num_repeats));
       values_decoded += num_repeats;
     }

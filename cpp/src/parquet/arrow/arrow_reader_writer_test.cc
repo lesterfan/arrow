@@ -410,6 +410,8 @@ void WriteTableToBuffer(const std::shared_ptr<Table>& table, int64_t row_group_s
 
   auto write_props = WriterProperties::Builder().write_batch_size(100)->build();
 
+  printf("Writing table to buffer: %s\n", table->ToString().c_str());
+
   ASSERT_OK_NO_THROW(WriteTable(*table, ::arrow::default_memory_pool(), sink,
                                 row_group_size, write_props, arrow_properties));
   ASSERT_OK_AND_ASSIGN(*out, sink->Finish());
@@ -4884,11 +4886,13 @@ class TestArrowReadDictionaryAndRunEndEncoded : public ::testing::TestWithParam<
   }
 
   void CheckReadWholeFile(const Table& expected) {
+    printf("In CheckReadWholeFile\n");
     ASSERT_OK_AND_ASSIGN(auto reader, GetReader());
 
     std::shared_ptr<Table> actual;
     ASSERT_OK_NO_THROW(reader->ReadTable(&actual));
 
+    printf("Actual read table: %s\n", actual->ToString().c_str());
     ::arrow::AssertTablesEqual(expected, *actual, /*same_chunk_layout=*/false);
   }
 
@@ -5046,6 +5050,7 @@ TEST_P(TestArrowReadDictionaryAndRunEndEncoded, ReeReadWholeFile) {
                                   /*nullable=*/true);
   ASSERT_OK_AND_ASSIGN(ex_table, ::arrow::acero::RunEndEncodeTableColumns(*ex_table, {0}));
 
+  printf("CheckReadWholeFile with ex_table: %s\n", ex_table->ToString().c_str());
   CheckReadWholeFile(*ex_table);
 }
 
